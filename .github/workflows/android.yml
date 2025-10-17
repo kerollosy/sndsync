@@ -48,7 +48,7 @@ jobs:
           jar cvf ./lib/AudioServer.jar -C ./bin classes.dex
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: audio-server-jar
           path: ./lib/AudioServer.jar
