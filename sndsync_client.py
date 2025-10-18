@@ -45,7 +45,8 @@ class SndsyncClient:
     """Android audio streaming client using ADB and socket communication."""
     
     def __init__(self, port: int = 9999, device_serial: Optional[str] = None, 
-                jar_path: Optional[str] = None, debug: bool = False):
+            jar_path: Optional[str] = None, apk_path: Optional[str] = None, 
+            debug: bool = False):
         """
         Initialize the sndsync client.
         
@@ -53,6 +54,7 @@ class SndsyncClient:
             port: Local port for audio forwarding
             device_serial: Optional device serial for multiple devices
             jar_path: Path to AudioServer.jar file
+            apk_path: Path to MetadataApp.apk file
             debug: Enable debug logging
         """
         self.running = True
@@ -60,6 +62,7 @@ class SndsyncClient:
         self.metadata_port = 9998  # Hardcoded for now
         self.device_serial = device_serial
         self.jar_path = Path(jar_path) if jar_path else Path("AudioServer.jar")
+        self.apk_path = Path(apk_path) if apk_path else Path("MetadataApp.apk")
         
         # Setup logging
         self.logger = logging.getLogger("sndsync")
@@ -99,6 +102,7 @@ class SndsyncClient:
         self._check_adb()
         self._check_device()
         self._setup_audio_server()
+        self._setup_metadata_app()
         self._setup_metadata_forwarding()
         
         # Start metadata thread
@@ -187,6 +191,37 @@ class SndsyncClient:
             sys.exit(1)
         
         self.logger.debug("AudioServer appears to be running")
+
+    def _setup_metadata_app(self):
+        """Install and setup the metadata collection app."""
+        if not self.apk_path.exists():
+            self.logger.warning(f"MetadataApp.apk not found at: {self.apk_path}")
+            self.logger.warning("Metadata collection will not be available")
+            self.logger.warning("Specify APK path with --apk or place MetadataApp.apk in current directory")
+            return False
+        
+        self.logger.info("Installing metadata app...")
+        result = subprocess.run(
+            self.adb_cmd + ["install", "-r", str(self.apk_path)],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode != 0:
+            self.logger.warning("Failed to install metadata app")
+            self.logger.debug(result.stderr)
+            return False
+        
+        self.logger.info("Metadata app installed successfully")
+
+        # Notify user about notification permissions
+        self.logger.info("=" * 60)
+        self.logger.info("IMPORTANT: Please grant notification access to the metadata app!")
+        self.logger.info("1. Go to Settings > Apps > Metadata App > Permissions")
+        self.logger.info("2. Enable 'Notification access' permission")
+        self.logger.info("3. The app will automatically detect music metadata")
+        self.logger.info("=" * 60)
+        
+        return True
     
     def _setup_metadata_forwarding(self):
         """Setup port forwarding for metadata."""
@@ -461,6 +496,10 @@ def main():
         help="Path to AudioServer.jar file (default: ./AudioServer.jar)"
     )
     parser.add_argument(
+        "-a", "--apk",
+        help="Path to MetadataApp.apk file (default: ./MetadataApp.apk)"
+    )
+    parser.add_argument(
         "-d", "--debug",
         action="store_true",
         help="Enable debug logging"
@@ -472,6 +511,7 @@ def main():
         port=args.port,
         device_serial=args.serial,
         jar_path=args.jar,
+        apk_path=args.apk,
         debug=args.debug
     )
     
