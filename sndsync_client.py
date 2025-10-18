@@ -39,18 +39,21 @@ class ColoredFormatter(logging.Formatter):
 class SndsyncClient:
     """Android audio streaming client using ADB and socket communication."""
     
-    def __init__(self, port: int = 9999, device_serial: Optional[str] = None, debug: bool = False):
+    def __init__(self, port: int = 9999, device_serial: Optional[str] = None, 
+                jar_path: Optional[str] = None, debug: bool = False):
         """
         Initialize the sndsync client.
         
         Args:
             port: Local port for audio forwarding
             device_serial: Optional device serial for multiple devices
+            jar_path: Path to AudioServer.jar file
             debug: Enable debug logging
         """
         self.running = True
         self.port = port
         self.device_serial = device_serial
+        self.jar_path = Path(jar_path) if jar_path else Path("lib/AudioServer.jar")
         
         # Setup logging
         self.logger = logging.getLogger("sndsync")
@@ -68,6 +71,7 @@ class SndsyncClient:
         self.socket = None
         self.pyaudio_instance = None
         self.audio_stream = None
+        self.server_process = None
         
         # Audio configuration (will be set from server header)
         self.sample_rate = None
@@ -113,28 +117,32 @@ class SndsyncClient:
     
     def _setup_audio_server(self):
         """Deploy and start the AudioServer on device."""
-        jar_path = Path("lib/AudioServer.jar")
-        
-        if not jar_path.exists():
-            self.logger.error("AudioServer.jar not found in lib/ directory")
-            self.logger.error("Please compile the project first using the build script")
+        if not self.jar_path.exists():
+            self.logger.error(f"AudioServer.jar not found at: {self.jar_path}")
+            self.logger.error("Please compile the project first or specify correct path with --jar")
             sys.exit(1)
         
-        self.logger.info("Pushing AudioServer.jar to device...")
+        self.logger.info(f"Pushing {self.jar_path} to device...")
         result = subprocess.run(
-            self.adb_cmd + ["push", str(jar_path), "/data/local/tmp/AudioServer.jar"],
+            self.adb_cmd + ["push", str(self.jar_path), "/data/local/tmp/AudioServer.jar"],
             capture_output=True, text=True
         )
         
         if result.returncode != 0:
             self.logger.error("Failed to push JAR to device")
+            self.logger.error(result.stderr)
             sys.exit(1)
         
         self.logger.info(f"Setting up port forwarding for port {self.port}...")
-        subprocess.run(
+        result = subprocess.run(
             self.adb_cmd + ["forward", f"tcp:{self.port}", f"tcp:{self.port}"],
-            capture_output=True
+            capture_output=True, text=True
         )
+        
+        if result.returncode != 0:
+            self.logger.error("Failed to setup port forwarding")
+            self.logger.error(result.stderr)
+            sys.exit(1)
         
         self.logger.info("Starting AudioServer on device...")
         # Start the server in background
@@ -146,12 +154,22 @@ class SndsyncClient:
         
         # Wait a moment for server to start
         time.sleep(2)
+        
+        # Check if server started successfully
+        if self.server_process.poll() is not None:
+            stdout, stderr = self.server_process.communicate()
+            self.logger.error("AudioServer failed to start")
+            if stderr:
+                self.logger.error(f"Error: {stderr.decode()}")
+            sys.exit(1)
     
     def _connect(self):
         """Connect to the audio stream."""
         self.logger.info("Connecting to audio stream...")
         
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(10)  # 10 second timeout
+        
         try:
             self.socket.connect(("127.0.0.1", self.port))
             self.logger.info("Connected successfully")
@@ -199,7 +217,7 @@ class SndsyncClient:
         
         bytes_received = 0
         try:
-            while True:
+            while self.running:
                 data = self.socket.recv(4096)
                 if not data:
                     self.logger.info("Connection closed by device")
@@ -236,7 +254,10 @@ class SndsyncClient:
                 self.server_process.terminate()
                 self.server_process.wait(timeout=5)
             except:
-                pass
+                try:
+                    self.server_process.kill()
+                except:
+                    pass
 
         if self.audio_stream:
             try:
@@ -256,6 +277,13 @@ class SndsyncClient:
                 self.socket.close()
             except:
                 pass
+        
+        # Clean up port forwarding
+        try:
+            subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.port}"], 
+                        capture_output=True)
+        except:
+            pass
 
 
 def main():
@@ -274,6 +302,10 @@ def main():
         help="Local port for forwarding (default: 9999)"
     )
     parser.add_argument(
+        "-j", "--jar",
+        help="Path to AudioServer.jar file (default: lib/AudioServer.jar)"
+    )
+    parser.add_argument(
         "-d", "--debug",
         action="store_true",
         help="Enable debug logging"
@@ -284,6 +316,7 @@ def main():
     client = SndsyncClient(
         port=args.port,
         device_serial=args.serial,
+        jar_path=args.jar,
         debug=args.debug
     )
     
