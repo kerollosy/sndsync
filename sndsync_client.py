@@ -102,12 +102,12 @@ class SndsyncClient:
         self._check_adb()
         self._check_device()
         self._setup_audio_server()
-        self._setup_metadata_app()
-        self._setup_metadata_forwarding()
-        
-        # Start metadata thread
-        self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
-        self.metadata_thread.start()
+        metadata_available = self._setup_metadata_app()
+
+        if metadata_available:
+            self._setup_metadata_forwarding()
+            self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
+            self.metadata_thread.start()
         
         self._connect()
         self._stream()
