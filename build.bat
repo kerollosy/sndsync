@@ -1,51 +1,73 @@
 @echo off
-REM Audio Server Build Script (fixed)
-
 setlocal enabledelayedexpansion
 
-set "ANDROID_SDK=%LOCALAPPDATA%\Android\Sdk"
-set "ANDROID_JAR=%ANDROID_SDK%\platforms\android-34\android.jar"
-set "D8=%ANDROID_SDK%\build-tools\35.0.0\d8.bat"
+echo Building AudioServer...
 
-REM Ensure output dirs exist
-if not exist ".\bin" mkdir ".\bin"
-if not exist ".\lib" mkdir ".\lib"
-
-echo [*] Compiling Java...
-javac -cp "%ANDROID_JAR%" ".\src\AudioServer.java" -d ".\bin"
-if errorlevel 1 (
-    echo [ERROR] Compilation failed
-    pause
-    exit /b 1
+REM Check for Android SDK
+if not defined ANDROID_HOME (
+    if exist "%LOCALAPPDATA%\Android\Sdk" (
+        set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+    ) else (
+        echo ERROR: ANDROID_HOME not set and SDK not found in default location
+        echo Please set ANDROID_HOME environment variable
+        exit /b 1
+    )
 )
-echo [OK] Compilation successful
 
-echo [*] Converting to DEX...
-if exist ".\bin\classes.dex" del ".\bin\classes.dex"
+set "ANDROID_JAR=%ANDROID_HOME%\platforms\android-34\android.jar"
+set "D8=%ANDROID_HOME%\build-tools\35.0.0\d8.bat"
 
-@REM Use call because %D8% is a .bat; calling it without call will not return control to this script
-call "%D8%" ".\bin\AudioServer.class" --output ".\bin"
-if errorlevel 1 (
-    echo [ERROR] DEX conversion failed
-    pause
+REM Verify required files exist
+if not exist "%ANDROID_JAR%" (
+    echo ERROR: Android JAR not found at: %ANDROID_JAR%
+    echo Please install Android SDK API 34
     exit /b 1
 )
 
-echo [OK] DEX conversion successful
-
-echo [*] Creating JAR...
-if exist ".\lib\AudioServer.jar" del ".\lib\AudioServer.jar"
-REM Put classes.dex at top-level of the jar
-jar cvf ".\lib\AudioServer.jar" -C ".\bin" "classes.dex"
-if errorlevel 1 (
-    echo [ERROR] JAR creation failed
-    pause
+if not exist "%D8%" (
+    echo ERROR: d8 tool not found at: %D8%
+    echo Please install Android build-tools 35.0.0
     exit /b 1
 )
-echo [OK] JAR created
+
+if not exist "src\AudioServer.java" (
+    echo ERROR: Source file not found: src\AudioServer.java
+    exit /b 1
+)
+
+REM Create output directories
+if not exist "bin" mkdir "bin"
+if not exist "lib" mkdir "lib"
+
+REM Clean previous build
+if exist "bin\*.class" del /q "bin\*.class"
+if exist "bin\classes.dex" del /q "bin\classes.dex"
+if exist "lib\AudioServer.jar" del /q "lib\AudioServer.jar"
+
+echo Compiling Java...
+javac -cp "%ANDROID_JAR%" "src\AudioServer.java" -d "bin"
+if errorlevel 1 (
+    echo ERROR: Compilation failed
+    exit /b 1
+)
+
+echo Converting to DEX...
+call "%D8%" "bin\AudioServer.class" --output "bin"
+if errorlevel 1 (
+    echo ERROR: DEX conversion failed
+    exit /b 1
+)
+
+echo Creating JAR...
+jar cf "lib\AudioServer.jar" -C "bin" "classes.dex"
+if errorlevel 1 (
+    echo ERROR: JAR creation failed
+    exit /b 1
+)
 
 echo.
-echo [SUCCESS] Build complete!
-echo [*] JAR location: %cd%\lib\AudioServer.jar
+echo Build successful!
+echo JAR created: %cd%\lib\AudioServer.jar
+echo File size: 
+for %%A in ("lib\AudioServer.jar") do echo   %%~zA bytes
 echo.
-pause
