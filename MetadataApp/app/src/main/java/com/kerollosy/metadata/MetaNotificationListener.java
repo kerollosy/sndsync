@@ -1,4 +1,4 @@
-package com.example.abc;
+package com.kerollosy.metada;
 
 import android.content.ComponentName;
 import android.content.Context;
