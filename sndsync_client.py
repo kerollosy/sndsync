@@ -1,6 +1,6 @@
 """
 sndsync - Android Audio Streaming Client
-Stream audio from Android devices to desktop in real-time.
+Stream audio from Android devices to desktop in real-time with metadata display.
 """
 
 import subprocess
@@ -11,10 +11,15 @@ import sys
 import argparse
 import logging
 import struct
+import json
+import base64
+import threading
 from pathlib import Path
 from typing import Optional
+from io import BytesIO
 
 import pyaudio
+from PIL import Image
 from colorama import init, Fore, Style
 
 init(autoreset=True)
@@ -52,6 +57,7 @@ class SndsyncClient:
         """
         self.running = True
         self.port = port
+        self.metadata_port = 9998  # Hardcoded for now
         self.device_serial = device_serial
         self.jar_path = Path(jar_path) if jar_path else Path("AudioServer.jar")
         
@@ -69,6 +75,7 @@ class SndsyncClient:
         
         # Resources
         self.socket = None
+        self.metadata_socket = None
         self.pyaudio_instance = None
         self.audio_stream = None
         self.server_process = None
@@ -77,6 +84,10 @@ class SndsyncClient:
         self.sample_rate = None
         self.channels = None
         self.audio_format = None
+        
+        # Metadata tracking
+        self.last_metadata = None
+        self.metadata_thread = None
 
         # Build ADB command prefix
         self.adb_cmd = ["adb"]
@@ -88,6 +99,12 @@ class SndsyncClient:
         self._check_adb()
         self._check_device()
         self._setup_audio_server()
+        self._setup_metadata_forwarding()
+        
+        # Start metadata thread
+        self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
+        self.metadata_thread.start()
+        
         self._connect()
         self._stream()
 
@@ -170,6 +187,99 @@ class SndsyncClient:
             sys.exit(1)
         
         self.logger.debug("AudioServer appears to be running")
+    
+    def _setup_metadata_forwarding(self):
+        """Setup port forwarding for metadata."""
+        self.logger.info(f"Setting up port forwarding for metadata port {self.metadata_port}...")
+        result = subprocess.run(
+            self.adb_cmd + ["forward", f"tcp:{self.metadata_port}", f"tcp:{self.metadata_port}"],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode != 0:
+            self.logger.warning("Failed to setup metadata port forwarding")
+        else:
+            self.logger.debug("Metadata port forwarding established")
+    
+    def _metadata_listener(self):
+        """Listen for metadata updates in a separate thread."""
+        try:
+            self.logger.debug("Starting metadata listener thread...")
+            time.sleep(1)  # Give time for connections to establish
+            
+            self.metadata_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.metadata_socket.settimeout(2.0)
+            
+            try:
+                self.logger.debug(f"Connecting to metadata server on port {self.metadata_port}...")
+                self.metadata_socket.connect(("127.0.0.1", self.metadata_port))
+                self.logger.info("Connected to metadata server")
+            except (socket.timeout, ConnectionRefusedError):
+                self.logger.debug("Metadata server not available (this is optional)")
+                return
+            
+            buffer = ""
+            while self.running:
+                try:
+                    data = self.metadata_socket.recv(1024).decode('utf-8')
+                    if not data:
+                        break
+                    
+                    buffer += data
+                    
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        if line.strip():
+                            try:
+                                metadata = json.loads(line)
+                                
+                                if metadata == self.last_metadata:
+                                    continue
+                                
+                                self.last_metadata = metadata
+                                self._display_metadata(metadata)
+                                
+                            except json.JSONDecodeError:
+                                pass
+                
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    self.logger.debug(f"Metadata listener error: {e}")
+                    break
+        
+        except Exception as e:
+            self.logger.debug(f"Metadata listener thread error: {e}")
+        finally:
+            if self.metadata_socket:
+                try:
+                    self.metadata_socket.close()
+                except:
+                    pass
+    
+    def _display_metadata(self, metadata):
+        """Display metadata in a formatted way."""
+        self.logger.info("="*60)
+        self.logger.info("Now Playing:")
+        self.logger.info(f"  Package: {metadata.get('package', 'Unknown')}")
+        self.logger.info(f"  Title:   {metadata.get('title', 'Unknown')}")
+        self.logger.info(f"  Artist:  {metadata.get('artist', 'Unknown')}")
+        self.logger.info(f"  Album:   {metadata.get('album', 'Unknown')}")
+        
+        duration = metadata.get('duration', 0)
+        if duration:
+            minutes = duration // 1000 // 60
+            self.logger.info(f"  Duration: {minutes} minutes")
+        
+        if metadata.get('albumArt'):
+            try:
+                img_data = base64.b64decode(metadata['albumArt'])
+                img = Image.open(BytesIO(img_data))
+                img.show()
+            except Exception as e:
+                self.logger.debug(f"Failed to display album art: {e}")
+        
+        self.logger.info("="*60)
     
     def _connect(self):
         """Connect to the audio stream."""
@@ -308,10 +418,25 @@ class SndsyncClient:
             except:
                 pass
         
+        if self.metadata_socket:
+            try:
+                self.logger.debug("Closing metadata socket...")
+                self.metadata_socket.close()
+            except:
+                pass
+        
         # Clean up port forwarding
         try:
             self.logger.debug(f"Removing port forwarding for {self.port}...")
-            self._run_adb_command(["forward", "--remove", f"tcp:{self.port}"], check_returncode=False)
+            subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.port}"], 
+                        capture_output=True, timeout=5)
+        except:
+            pass
+        
+        try:
+            self.logger.debug(f"Removing port forwarding for metadata {self.metadata_port}...")
+            subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.metadata_port}"], 
+                        capture_output=True, timeout=5)
         except:
             pass
 
@@ -319,7 +444,7 @@ class SndsyncClient:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Stream audio from Android device to desktop"
+        description="Stream audio from Android device to desktop with metadata display"
     )
     parser.add_argument(
         "-s", "--serial",
@@ -329,7 +454,7 @@ def main():
         "-p", "--port",
         type=int,
         default=9999,
-        help="Local port for forwarding (default: 9999)"
+        help="Local port for audio forwarding (default: 9999)"
     )
     parser.add_argument(
         "-j", "--jar",
