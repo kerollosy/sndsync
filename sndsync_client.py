@@ -102,15 +102,28 @@ class SndsyncClient:
         self._check_adb()
         self._check_device()
         self._setup_audio_server()
-        metadata_available = self._setup_metadata_app()
-
-        if metadata_available:
-            self._setup_metadata_forwarding()
-            self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
-            self.metadata_thread.start()
+        
+        self.logger.info("Starting audio stream (metadata setup in background)...")
+        
+        # Start metadata setup in a separate thread so it doesn't block audio streaming
+        metadata_thread_setup = threading.Thread(target=self._setup_metadata_in_background, daemon=True)
+        metadata_thread_setup.start()
         
         self._connect()
         self._stream()
+    
+    def _setup_metadata_in_background(self):
+        """Setup metadata app and listener in a background thread."""
+        try:
+            metadata_available = self._setup_metadata_app()
+            if metadata_available:
+                time.sleep(1)  # Give device time to settle
+                self._setup_metadata_forwarding()
+                self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
+                self.metadata_thread.start()
+        except Exception as e:
+            self.logger.debug(f"Background metadata setup error: {e}")
+        
 
     def _check_adb(self):
         """Verify ADB is installed and accessible."""
