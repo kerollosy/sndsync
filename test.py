@@ -31,6 +31,7 @@ def connect_and_listen():
     """Connect to the metadata server and listen for updates"""
     host = 'localhost'
     port = 9998
+    last_metadata = None
     
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -49,12 +50,17 @@ def connect_and_listen():
                 
                 buffer += data
                 
-                # Process complete JSON objects (newline-separated)
                 while '\n' in buffer:
                     line, buffer = buffer.split('\n', 1)
                     if line.strip():
                         try:
                             metadata = json.loads(line)
+                            
+                            if metadata == last_metadata:
+                                continue
+                            
+                            last_metadata = metadata
+                            
                             print("\n" + "="*50)
                             print("Now Playing:")
                             print(f"  Package: {metadata.get('package', 'Unknown')}")
@@ -65,15 +71,17 @@ def connect_and_listen():
                             if metadata.get('albumArt'):
                                 img_data = base64.b64decode(metadata['albumArt'])
                                 img = Image.open(BytesIO(img_data))
-                                img.show()  # Display the image
+                                img.show()
                             print("="*50)
                         except json.JSONDecodeError as e:
                             print(f"Failed to parse JSON: {e}")
                             print(f"Raw data: {line}")
             
             except socket.timeout:
-                print(f"Error receiving data: {e}")
                 continue
+            except Exception as e:
+                print(f"Error receiving data: {e}")
+                break
     
     except ConnectionRefusedError:
         print(f"Failed to connect to {host}:{port}")
@@ -91,7 +99,7 @@ def main():
     if not setup_port_forward():
         sys.exit(1)
     
-    time.sleep(1)  # Give port forwarding time to establish
+    time.sleep(1)
     
     try:
         connect_and_listen()
