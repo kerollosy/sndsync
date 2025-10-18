@@ -57,6 +57,8 @@ class SndsyncClient:
             apk_path: Path to MetadataApp.apk file
             debug: Enable debug logging
         """
+        self.METADATA_PACKAGE = "com.kerollosy.metadata"
+
         self.running = True
         self.port = port
         self.metadata_port = 9998  # Hardcoded for now
@@ -117,12 +119,93 @@ class SndsyncClient:
         try:
             metadata_available = self._setup_metadata_app()
             if metadata_available:
-                time.sleep(1)  # Give device time to settle
-                self._setup_metadata_forwarding()
-                self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
-                self.metadata_thread.start()
+                self.logger.info("Waiting for notification permission and service to start...")
+                metadata_available = self._wait_for_metadata_service()
+                if metadata_available:
+                    time.sleep(1)  # Give device time to settle
+                    self._setup_metadata_forwarding()
+                    self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
+                    self.metadata_thread.start()
         except Exception as e:
             self.logger.debug(f"Background metadata setup error: {e}")
+
+    def _check_notification_permission(self) -> bool:
+        """
+        Check if notification permission is granted for the metadata app.
+        
+        Returns:
+            True if notification listener is enabled, False otherwise
+        """
+        result = subprocess.run(
+            self.adb_cmd + ["shell", "settings", "get", "secure", "enabled_notification_listeners"],
+            capture_output=True, text=True
+        )
+        
+        if self.METADATA_PACKAGE in result.stdout:
+            self.logger.debug("Notification permission detected")
+            return True
+        
+        return False
+
+    def _is_metadata_service_running(self) -> bool:
+        """
+        Check if the metadata app's service is running.
+        
+        Returns:
+            True if service is detected, False otherwise
+        """
+        result = subprocess.run(
+            self.adb_cmd + ["shell", "dumpsys", "activity", "services", self.METADATA_PACKAGE],
+            capture_output=True,
+            text=True
+        )
+        
+        return "MetaNotificationListener" in result.stdout
+
+    def _wait_for_metadata_service(self, timeout: int = 60):
+        """
+        Wait for notification permission to be granted and service to start.
+        
+        Args:
+            timeout: Maximum seconds to wait
+        """
+        start_time = time.time()
+        
+        self.logger.info("=" * 60)
+        self.logger.info("IMPORTANT: Please grant notification access to the metadata app!")
+        self.logger.info("1. Go to Settings > Apps > Sndsync Metadata")
+        self.logger.info("2. Find 'Permissions' or 'App Permissions'")
+        self.logger.info("3. Enable 'Notification access' or 'Notification listener' permission")
+        self.logger.info("4. The app will automatically start and detect music metadata")
+        self.logger.info("=" * 60)
+        
+        permission_granted = False
+        service_running = False
+        
+        while time.time() - start_time < timeout:
+            if not permission_granted:
+                permission_granted = self._check_notification_permission()
+                if permission_granted:
+                    self.logger.info("✓ Notification permission granted")
+            
+            if permission_granted and not service_running:
+                service_running = self._is_metadata_service_running()
+                if service_running:
+                    self.logger.info("✓ Metadata service started")
+            
+            if permission_granted and service_running:
+                self.logger.info("Metadata service ready")
+                return True
+            
+            time.sleep(1)
+        
+        self.logger.warning(f"Timeout waiting for metadata service (waited {timeout}s)")
+        if not permission_granted:
+            self.logger.warning("Notification permission was not granted")
+        if not service_running:
+            self.logger.warning("Metadata service did not start")
+
+        return False
         
 
     def _check_adb(self):
@@ -225,15 +308,6 @@ class SndsyncClient:
             return False
         
         self.logger.info("Metadata app installed successfully")
-
-        # Notify user about notification permissions
-        self.logger.info("=" * 60)
-        self.logger.info("IMPORTANT: Please grant notification access to the metadata app!")
-        self.logger.info("1. Go to Settings > Apps > Metadata App > Permissions")
-        self.logger.info("2. Enable 'Notification access' permission")
-        self.logger.info("3. The app will automatically detect music metadata")
-        self.logger.info("=" * 60)
-        
         return True
     
     def _setup_metadata_forwarding(self):
