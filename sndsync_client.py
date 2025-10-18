@@ -405,12 +405,12 @@ class SndsyncClient:
 
     def _display_album_art(self, album_art_data):
         """Display album art in a separate thread to avoid blocking."""
-            try:
+        try:
             img_data = base64.b64decode(album_art_data)
-                img = Image.open(BytesIO(img_data))
-                img.show()
-            except Exception as e:
-                self.logger.debug(f"Failed to display album art: {e}")
+            img = Image.open(BytesIO(img_data))
+            img.show()
+        except Exception as e:
+            self.logger.debug(f"Failed to display album art: {e}")
     
     def _connect(self):
         """Connect to the audio stream."""
