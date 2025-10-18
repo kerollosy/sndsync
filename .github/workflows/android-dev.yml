@@ -1,0 +1,60 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ "dev" ]
+  pull_request:
+    branches: [ "dev" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 34
+          build-tools-version: 35.0.0
+
+      - name: Create output directories
+        run: |
+          mkdir -p ./bin
+          mkdir -p ./lib
+
+      - name: Compile Java
+        run: |
+          javac -cp "$ANDROID_HOME/platforms/android-34/android.jar" \
+            ./src/com/myproject/MetaServer.java \
+            ./src/com/myproject/FakeContext.java \
+            ./src/android/content/IContentProvider.java \
+            ./src/com/myproject/ActivityManager.java \
+            -d ./bin
+
+      - name: Convert to DEX
+        run: |
+          rm -f ./bin/classes.dex
+          find ./bin -name "*.class" -print0 | xargs -0 \
+            "$ANDROID_HOME/build-tools/35.0.0/d8" \
+            --output ./bin \
+            --lib "$ANDROID_HOME/platforms/android-34/android.jar"
+
+      - name: Create JAR
+        run: |
+          rm -f ./lib/MetaServer.jar
+          jar cvf ./lib/MetaServer.jar -C ./bin classes.dex
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: metaserver-jar
+          path: ./lib/MetaServer.jar
+          retention-days: 30
