@@ -61,6 +61,11 @@ def connect_and_listen():
                             print(f"  Title:   {metadata.get('title', 'Unknown')}")
                             print(f"  Artist:  {metadata.get('artist', 'Unknown')}")
                             print(f"  Album:   {metadata.get('album', 'Unknown')}")
+                            print(f"  Duration: {metadata.get('duration', 'Unknown') // 1000 // 60} minutes")
+                            if metadata.get('albumArt'):
+                                img_data = base64.b64decode(metadata['albumArt'])
+                                img = Image.open(BytesIO(img_data))
+                                img.show()  # Display the image
                             print("="*50)
                         except json.JSONDecodeError as e:
                             print(f"Failed to parse JSON: {e}")
