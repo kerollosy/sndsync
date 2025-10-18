@@ -2,6 +2,7 @@ package com.kerollosy.metadata;
 
 import android.content.ComponentName;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -11,6 +12,7 @@ import android.util.Log;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 
 public class MetaNotificationListener extends NotificationListenerService {
@@ -34,6 +36,22 @@ public class MetaNotificationListener extends NotificationListenerService {
         }
     }
 
+    private String getBitmapBase64(Bitmap bitmap) {
+        if (bitmap == null) return null;
+
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos);
+            byte[] imageBytes = baos.toByteArray();
+            baos.close();
+
+            return android.util.Base64.encodeToString(imageBytes, android.util.Base64.DEFAULT);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to convert bitmap to base64", e);
+            return null;
+        }
+    }
+
     private void updatePlayingSongInfo(Context context) {
         try {
             MediaSessionManager msm =
@@ -41,7 +59,7 @@ public class MetaNotificationListener extends NotificationListenerService {
             List<MediaController> controllers =
                     msm.getActiveSessions(new ComponentName(context, MetaNotificationListener.class));
 
-            if (controllers == null || controllers.isEmpty()) {
+            if (controllers.isEmpty()) {
                 Log.d(TAG, "No active media sessions");
                 return;
             }
@@ -59,7 +77,7 @@ public class MetaNotificationListener extends NotificationListenerService {
             if (controller == null) {
                 controller = controllers.get(0); // fallback
             }
-            
+
             MediaMetadata metadata = controller.getMetadata();
             if (metadata == null) {
                 Log.d(TAG, "No metadata found");
@@ -69,20 +87,20 @@ public class MetaNotificationListener extends NotificationListenerService {
             String title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE);
             String artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST);
             String album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM);
-            String duration = metadata.getString(MediaMetadata.METADATA_KEY_DURATION);
-            String artwork = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI);
+            long duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
+            Bitmap albumArt = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
+
+//            Log.d(TAG, albumArt.toString());
 
             JSONObject json = new JSONObject();
             json.put("package", controller.getPackageName());
             json.put("title", title != null ? title : "");
             json.put("artist", artist != null ? artist : "");
             json.put("album", album != null ? album : "");
-            json.put("duration", duration != null ? duration : "");
-            json.put("artwork", artwork != null ? artwork : "");
+            json.put("duration", duration > 0 ? duration : 0);
+            json.put("albumArt", getBitmapBase64(albumArt) != null ? getBitmapBase64(albumArt) : "");
 
             MetadataWriter.send(json.toString());
-            Log.d(TAG, "Sent metadata: " + json);
-
         } catch (SecurityException e) {
             Log.e(TAG, "Missing notification access permission", e);
         } catch (Exception e) {
