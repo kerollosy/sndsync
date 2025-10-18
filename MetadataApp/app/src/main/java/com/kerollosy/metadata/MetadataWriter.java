@@ -17,8 +17,17 @@ public class MetadataWriter {
     private static final ExecutorService executor = Executors.newCachedThreadPool();
     private static Socket clientSocket;
     private static OutputStream outputStream;
+    private static boolean serverStarted = false;
 
     public static void startServer() {
+        synchronized (MetadataWriter.class) {
+            if (serverStarted) {
+                Log.d(TAG, "Server already started");
+                return;
+            }
+            serverStarted = true;
+        }
+
         executor.execute(() -> {
             try {
                 serverSocket = new ServerSocket(PORT);
