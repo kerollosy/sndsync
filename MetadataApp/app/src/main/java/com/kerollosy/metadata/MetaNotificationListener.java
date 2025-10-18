@@ -69,12 +69,16 @@ public class MetaNotificationListener extends NotificationListenerService {
             String title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE);
             String artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST);
             String album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM);
+            String duration = metadata.getString(MediaMetadata.METADATA_KEY_DURATION);
+            String artwork = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI);
 
             JSONObject json = new JSONObject();
             json.put("package", controller.getPackageName());
             json.put("title", title != null ? title : "");
             json.put("artist", artist != null ? artist : "");
             json.put("album", album != null ? album : "");
+            json.put("duration", duration != null ? duration : "");
+            json.put("artwork", artwork != null ? artwork : "");
 
             MetadataWriter.send(json.toString());
             Log.d(TAG, "Sent metadata: " + json);
