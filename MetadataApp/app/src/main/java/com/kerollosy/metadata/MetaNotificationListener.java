@@ -1,4 +1,4 @@
-package com.kerollosy.metada;
+package com.kerollosy.metadata;
 
 import android.content.ComponentName;
 import android.content.Context;

@@ -1,4 +1,4 @@
-package com.kerollosy.metada;
+package com.kerollosy.metadata;
 
 import android.util.Log;
 import java.io.OutputStream;
