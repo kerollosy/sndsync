@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 sndsync - Android Audio Streaming Client
 Stream audio from Android devices to desktop in real-time.
