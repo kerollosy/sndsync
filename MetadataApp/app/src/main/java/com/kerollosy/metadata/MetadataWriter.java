@@ -1,33 +1,70 @@
 package com.kerollosy.metadata;
 
+import android.net.LocalServerSocket;
+import android.net.LocalSocket;
 import android.util.Log;
+import java.io.IOException;
 import java.io.OutputStream;
-import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 public class MetadataWriter {
     private static final String TAG = "sndsync-meta";
-    private static Socket socket = null;
-    private static OutputStream out = null;
+    private static volatile OutputStream out = null;
+    private static final Object LOCK = new Object();
     private static final int METADATA_PORT = 9998;
 
-    public static void send(String jsonData) {
-        new Thread(() -> {
-            try {
-                if (socket == null || socket.isClosed()) {
-                    socket = new Socket("127.0.0.1", METADATA_PORT);
-                    out = socket.getOutputStream();
-                    Log.d(TAG, "Connected to metadata server");
-                }
+    static void setOutput(OutputStream o) {
+        synchronized (LOCK) {
+            out = o;
+        }
+    }
 
-                byte[] data = jsonData.getBytes(StandardCharsets.UTF_8);
+    static void clearOutput() {
+        synchronized (LOCK) {
+            out = null;
+        }
+    }
+
+    public static void send(String jsonData) {
+        synchronized (LOCK) {
+            if (out == null) {
+                Log.w(TAG, "MetadataWriter.send() called but out == null");
+                return;
+            }
+            try {
+                byte[] data = (jsonData + "\n").getBytes(StandardCharsets.UTF_8);
                 out.write(data);
                 out.flush();
-
                 Log.d(TAG, "Metadata sent: " + jsonData);
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to send metadata", e);
-                socket = null;
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to write metadata", e);
+                try { out.close(); } catch (IOException ignored) {}
+                out = null;
+            }
+        }
+    }
+
+    public static void startServer() {
+        new Thread(() -> {
+            try {
+                Log.i(TAG, "Opening metadata socket on port " + METADATA_PORT);
+                LocalServerSocket  metaServer = new LocalServerSocket(TAG);
+                try (LocalSocket metaSocket = metaServer.accept()) {
+                    Log.i(TAG, "Metadata socket accepted connection!");
+                    setOutput(metaSocket.getOutputStream());
+
+                    // Keep thread alive until socket closes
+                    byte[] tmp = new byte[1];
+                    while (metaSocket.getInputStream().read(tmp) != -1) {
+                        // Ignore input; this is only to detect disconnect
+                    }
+                } finally {
+                    clearOutput();
+                    Log.i(TAG, "Metadata socket disconnected");
+                    try { metaServer.close(); } catch (IOException ignored) {}
+                }
+            } catch (IOException e) {
+                Log.w(TAG, "Metadata socket error", e);
             }
         }).start();
     }

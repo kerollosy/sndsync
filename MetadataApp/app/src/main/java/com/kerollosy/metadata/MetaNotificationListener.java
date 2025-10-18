@@ -20,6 +20,7 @@ public class MetaNotificationListener extends NotificationListenerService {
     public void onListenerConnected() {
         super.onListenerConnected();
         Log.d(TAG, "Notification listener connected");
+        MetadataWriter.startServer();
         updatePlayingSongInfo(this);
     }
 
@@ -58,7 +59,7 @@ public class MetaNotificationListener extends NotificationListenerService {
             if (controller == null) {
                 controller = controllers.get(0); // fallback
             }
-
+            
             MediaMetadata metadata = controller.getMetadata();
             if (metadata == null) {
                 Log.d(TAG, "No metadata found");
