@@ -394,14 +394,23 @@ class SndsyncClient:
             self.logger.info(f"  Duration: {minutes} minutes")
         
         if metadata.get('albumArt'):
+            album_art_thread = threading.Thread(
+                target=self._display_album_art,
+                args=(metadata['albumArt'],),
+                daemon=True
+            )
+            album_art_thread.start()
+        
+        self.logger.info("="*60)
+
+    def _display_album_art(self, album_art_data):
+        """Display album art in a separate thread to avoid blocking."""
             try:
-                img_data = base64.b64decode(metadata['albumArt'])
+            img_data = base64.b64decode(album_art_data)
                 img = Image.open(BytesIO(img_data))
                 img.show()
             except Exception as e:
                 self.logger.debug(f"Failed to display album art: {e}")
-        
-        self.logger.info("="*60)
     
     def _connect(self):
         """Connect to the audio stream."""
