@@ -53,7 +53,7 @@ class SndsyncClient:
         self.running = True
         self.port = port
         self.device_serial = device_serial
-        self.jar_path = Path(jar_path) if jar_path else Path("lib/AudioServer.jar")
+        self.jar_path = Path(jar_path) if jar_path else Path("AudioServer.jar")
         
         # Setup logging
         self.logger = logging.getLogger("sndsync")
@@ -333,7 +333,7 @@ def main():
     )
     parser.add_argument(
         "-j", "--jar",
-        help="Path to AudioServer.jar file (default: lib/AudioServer.jar)"
+        help="Path to AudioServer.jar file (default: ./AudioServer.jar)"
     )
     parser.add_argument(
         "-d", "--debug",

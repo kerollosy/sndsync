@@ -37,11 +37,11 @@ if [ ! -f "src/AudioServer.java" ]; then
     exit 1
 fi
 
-# Create output directories
-mkdir -p bin lib
+# Create output directory
+mkdir -p bin
 
 # Clean previous build
-rm -f bin/*.class bin/classes.dex lib/AudioServer.jar
+rm -f bin/*.class bin/classes.dex AudioServer.jar
 
 echo "Compiling Java..."
 javac -cp "$ANDROID_JAR" "src/AudioServer.java" -d "bin"
@@ -50,10 +50,10 @@ echo "Converting to DEX..."
 "$D8" "bin/AudioServer.class" --output "bin"
 
 echo "Creating JAR..."
-jar cf "lib/AudioServer.jar" -C "bin" "classes.dex"
+jar cf "AudioServer.jar" -C "bin" "classes.dex"
 
 echo ""
 echo "Build successful!"
-echo "JAR created: $(pwd)/lib/AudioServer.jar"
-echo "File size: $(stat -c%s "lib/AudioServer.jar" 2>/dev/null || stat -f%z "lib/AudioServer.jar" 2>/dev/null || echo "unknown") bytes"
+echo "JAR created: $(pwd)/AudioServer.jar"
+echo "File size: $(stat -c%s "AudioServer.jar" 2>/dev/null || stat -f%z "AudioServer.jar" 2>/dev/null || echo "unknown") bytes"
 echo ""

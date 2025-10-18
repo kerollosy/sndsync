@@ -35,14 +35,13 @@ if not exist "src\AudioServer.java" (
     exit /b 1
 )
 
-REM Create output directories
+REM Create output directory
 if not exist "bin" mkdir "bin"
-if not exist "lib" mkdir "lib"
 
 REM Clean previous build
 if exist "bin\*.class" del /q "bin\*.class"
 if exist "bin\classes.dex" del /q "bin\classes.dex"
-if exist "lib\AudioServer.jar" del /q "lib\AudioServer.jar"
+if exist "AudioServer.jar" del /q "AudioServer.jar"
 
 echo Compiling Java...
 javac -cp "%ANDROID_JAR%" "src\AudioServer.java" -d "bin"
@@ -59,7 +58,7 @@ if errorlevel 1 (
 )
 
 echo Creating JAR...
-jar cf "lib\AudioServer.jar" -C "bin" "classes.dex"
+jar cf "AudioServer.jar" -C "bin" "classes.dex"
 if errorlevel 1 (
     echo ERROR: JAR creation failed
     exit /b 1
@@ -67,7 +66,7 @@ if errorlevel 1 (
 
 echo.
 echo Build successful!
-echo JAR created: %cd%\lib\AudioServer.jar
+echo JAR created: %cd%\AudioServer.jar
 echo File size: 
-for %%A in ("lib\AudioServer.jar") do echo   %%~zA bytes
+for %%A in ("AudioServer.jar") do echo   %%~zA bytes
 echo.
