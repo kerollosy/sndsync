@@ -110,11 +110,13 @@ class SndsyncClient:
         
         if "device" not in result.stdout:
             self.logger.error("No device connected")
+            if result.stderr:
+                self.logger.error(f"ADB error: {result.stderr}")
             sys.exit(1)
         
         if self.device_serial:
             self.logger.info(f"Using device: {self.device_serial}")
-    
+
     def _setup_audio_server(self):
         """Deploy and start the AudioServer on device."""
         if not self.jar_path.exists():
@@ -149,19 +151,25 @@ class SndsyncClient:
         self.server_process = subprocess.Popen(
             self.adb_cmd + ["shell", f"CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ AudioServer {self.port}"],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            text=True
         )
         
         # Wait a moment for server to start
+        self.logger.debug("Waiting for server to start...")
         time.sleep(2)
         
         # Check if server started successfully
         if self.server_process.poll() is not None:
             stdout, stderr = self.server_process.communicate()
             self.logger.error("AudioServer failed to start")
+            if stdout:
+                self.logger.debug(f"Server STDOUT:\n{stdout}")
             if stderr:
-                self.logger.error(f"Error: {stderr.decode()}")
+                self.logger.error(f"Server STDERR:\n{stderr}")
             sys.exit(1)
+        
+        self.logger.debug("AudioServer appears to be running")
     
     def _connect(self):
         """Connect to the audio stream."""
@@ -171,12 +179,16 @@ class SndsyncClient:
         self.socket.settimeout(10)  # 10 second timeout
         
         try:
+            self.logger.debug(f"Connecting to 127.0.0.1:{self.port}")
             self.socket.connect(("127.0.0.1", self.port))
             self.logger.info("Connected successfully")
             
             # Read audio header from server
             self._read_audio_header()
                 
+        except socket.timeout:
+            self.logger.error("Connection timed out - server may not be ready")
+            sys.exit(1)
         except socket.error as e:
             self.logger.error(f"Connection failed: {e}")
             sys.exit(1)
@@ -185,10 +197,15 @@ class SndsyncClient:
         """Read and parse audio configuration from server."""
         self.logger.info("Reading audio configuration...")
         
+        self.logger.debug("Waiting for 6-byte header...")
         header = self.socket.recv(6)
         if len(header) < 6:
-            self.logger.error("Could not read complete header")
+            self.logger.error(f"Could not read complete header (got {len(header)} bytes)")
+            if header:
+                self.logger.debug(f"Partial header: {header.hex()}")
             sys.exit(1)
+        
+        self.logger.debug(f"Header bytes: {header.hex()}")
         
         # Parse header (big-endian format)
         self.sample_rate = struct.unpack('>I', header[0:4])[0]  # Big-endian int
@@ -204,14 +221,18 @@ class SndsyncClient:
         """Stream audio from device to desktop."""
         self.logger.info("Setting up audio playback...")
         
-        self.pyaudio_instance = pyaudio.PyAudio()
-        self.audio_stream = self.pyaudio_instance.open(
-            format=pyaudio.paInt16,  # 16-bit audio
-            channels=self.channels,
-            rate=self.sample_rate,
-            output=True,
-            frames_per_buffer=4096
-        )
+        try:
+            self.pyaudio_instance = pyaudio.PyAudio()
+            self.audio_stream = self.pyaudio_instance.open(
+                format=pyaudio.paInt16,  # 16-bit audio
+                channels=self.channels,
+                rate=self.sample_rate,
+                output=True,
+                frames_per_buffer=4096
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to setup audio: {e}")
+            sys.exit(1)
         
         self.logger.info("Streaming audio... Press Ctrl+C to stop")
         
@@ -251,16 +272,23 @@ class SndsyncClient:
         
         if hasattr(self, 'server_process') and self.server_process:
             try:
+                self.logger.debug("Terminating server process...")
                 self.server_process.terminate()
                 self.server_process.wait(timeout=5)
-            except:
+                self.logger.debug("Server process terminated")
+            except subprocess.TimeoutExpired:
+                self.logger.debug("Server process didn't terminate, killing...")
                 try:
                     self.server_process.kill()
+                    self.logger.debug("Server process killed")
                 except:
                     pass
+            except:
+                pass
 
         if self.audio_stream:
             try:
+                self.logger.debug("Stopping audio stream...")
                 self.audio_stream.stop_stream()
                 self.audio_stream.close()
             except:
@@ -268,20 +296,22 @@ class SndsyncClient:
         
         if self.pyaudio_instance:
             try:
+                self.logger.debug("Terminating PyAudio...")
                 self.pyaudio_instance.terminate()
             except:
                 pass
         
         if self.socket:
             try:
+                self.logger.debug("Closing socket...")
                 self.socket.close()
             except:
                 pass
         
         # Clean up port forwarding
         try:
-            subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.port}"], 
-                        capture_output=True)
+            self.logger.debug(f"Removing port forwarding for {self.port}...")
+            self._run_adb_command(["forward", "--remove", f"tcp:{self.port}"], check_returncode=False)
         except:
             pass
 
