@@ -453,14 +453,6 @@ class SndsyncClient:
             except:
                 pass
         
-        if self.metadata_socket:
-            try:
-                self.logger.debug("Closing metadata socket...")
-                self.metadata_socket.close()
-            except:
-                pass
-        
-        # Clean up port forwarding
         try:
             self.logger.debug(f"Removing port forwarding for {self.port}...")
             subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.port}"], 
@@ -468,12 +460,19 @@ class SndsyncClient:
         except:
             pass
         
-        try:
-            self.logger.debug(f"Removing port forwarding for metadata {self.metadata_port}...")
-            subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.metadata_port}"], 
-                        capture_output=True, timeout=5)
-        except:
-            pass
+        if self.metadata_socket:
+            try:
+                self.logger.debug("Closing metadata socket...")
+                self.metadata_socket.close()
+            except:
+                pass
+
+            try:
+                self.logger.debug(f"Removing port forwarding for metadata {self.metadata_port}...")
+                subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.metadata_port}"], 
+                            capture_output=True, timeout=5)
+            except:
+                pass
 
 
 def main():
