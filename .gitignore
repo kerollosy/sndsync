@@ -2,3 +2,14 @@ lib/
 bin/
 *.wav
 *.jar
+
+/*.iml
+/.gradle
+/build/
+/out/
+/*.class
+/.idea
+*.apk
+*.keystore
+/dist/
+__pycache__/
