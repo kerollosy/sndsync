@@ -152,33 +152,12 @@ public class MetaServer {
         }
     }
 
-    private static void getActiveNotifications() {
-        try {
-            // Access NotificationManager's internal notification list
-            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            
-            // Use reflection to get active notifications
-            Method getActiveNotificationsMethod = 
-                nm.getClass().getDeclaredMethod("getActiveNotifications");
-            getActiveNotificationsMethod.setAccessible(true);
-            
-            StatusBarNotification[] notifications = 
-                (StatusBarNotification[]) getActiveNotificationsMethod.invoke(nm);
-
-            System.out.println("[MetaServer] Active notifications count: " + notifications.length);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
     private static void initMediaController() throws Exception {
         System.out.println("[MetaServer] Initializing MediaController...");
         if (context == null) {
             System.out.println("[MetaServer] Using FakeContext");
             context = FakeContext.get();
         }
-
-        getActiveNotifications();
 
         System.out.println(context.getPackageManager().getInstalledApplications(128).size() + " installed applications");
         
@@ -223,6 +202,8 @@ public class MetaServer {
                     testAudioManager(service);
                 } else if ("window".equals(serviceName)) {
                     testWindowManager(service);
+                } else if ("media_session".equals(serviceName)) {
+                    testMediaSessionManager(service);
                 }
             } else {
                 System.out.println("✗ Not available");
@@ -267,4 +248,13 @@ public class MetaServer {
             System.out.println("  → WindowManager test failed: " + e.getMessage());
         }
     }
+
+    private static void testMediaSessionManager(Object mediaSessionManager) {
+        try {
+            Method getActiveSessionsMethod = mediaSessionManager.getClass().getMethod("getActiveSessions", android.content.ComponentName.class);
+            java.util.List<?> sessions = (java.util.List<?>) getActiveSessionsMethod.invoke(mediaSessionManager, null);
+            System.out.println("  → Active media sessions: " + sessions.size());
+        } catch (Exception e) {
+            System.out.println("  → MediaSessionManager test failed: " + e.getMessage());
+        }
 }
