@@ -251,11 +251,119 @@ public class MetaServer {
 
     private static void testMediaSessionManager(Object mediaSessionManager) {
         try {
-            Method getActiveSessionsMethod = mediaSessionManager.getClass().getMethod("getActiveSessions", android.content.ComponentName.class);
-            java.util.List<?> sessions = (java.util.List<?>) getActiveSessionsMethod.invoke(mediaSessionManager, null);
-            System.out.println("  → Active media sessions: " + sessions.size());
+            // Test getting active sessions (requires notification listener permission)
+            try {
+                Method getActiveSessionsMethod = mediaSessionManager.getClass().getMethod("getActiveSessions", android.content.ComponentName.class);
+                
+                // Create a ComponentName for our shell package as notification listener
+                android.content.ComponentName componentName = new android.content.ComponentName(
+                    PACKAGE_NAME, 
+                    PACKAGE_NAME + ".NotificationListener"
+                );
+                
+                Object activeSessions = getActiveSessionsMethod.invoke(mediaSessionManager, componentName);
+                
+                if (activeSessions != null) {
+                    java.util.List<?> sessionList = (java.util.List<?>) activeSessions;
+                    System.out.println("  → Active media sessions: " + sessionList.size());
+                    
+                    // Test each active session
+                    for (int i = 0; i < Math.min(sessionList.size(), 3); i++) { // Limit to first 3
+                        Object session = sessionList.get(i);
+                        testMediaSession(session, i);
+                    }
+                }
+            } catch (SecurityException e) {
+                System.out.println("  → Active sessions require notification listener permission: " + e.getMessage());
+            } catch (Exception e) {
+                System.out.println("  → Active sessions test failed: " + e.getMessage());
+            }
+            
+            // Test getting session manager callbacks (if available)
+            try {
+                Method addOnActiveSessionsChangedListenerMethod = mediaSessionManager.getClass().getMethod(
+                    "addOnActiveSessionsChangedListener", 
+                    Class.forName("android.media.session.MediaSessionManager$OnActiveSessionsChangedListener"),
+                    android.content.ComponentName.class
+                );
+                System.out.println("  → Session change listener support: Available");
+            } catch (NoSuchMethodException e) {
+                System.out.println("  → Session change listener support: Not available");
+            } catch (ClassNotFoundException e) {
+                System.out.println("  → Session change listener class not found");
+            }
+            
+            // Test if we can create a media session (might require different permissions)
+            try {
+                Method createSessionMethod = mediaSessionManager.getClass().getMethod("createSession", String.class);
+                // Don't actually create one, just check if method exists
+                System.out.println("  → Session creation support: Available");
+            } catch (NoSuchMethodException e) {
+                System.out.println("  → Session creation support: Not available");
+            }
+            
         } catch (Exception e) {
             System.out.println("  → MediaSessionManager test failed: " + e.getMessage());
+        }
+    }
+
+    private static void testMediaSession(Object session, int index) {
+        try {
+            // Get session info
+            Method getPackageNameMethod = session.getClass().getMethod("getPackageName");
+            String packageName = (String) getPackageNameMethod.invoke(session);
+            
+            Method getSessionTokenMethod = session.getClass().getMethod("getSessionToken");
+            Object token = getSessionTokenMethod.invoke(session);
+            
+            System.out.println("    Session " + index + ": " + packageName);
+            
+            // Try to get playback info
+            try {
+                Method getPlaybackInfoMethod = session.getClass().getMethod("getPlaybackInfo");
+                Object playbackInfo = getPlaybackInfoMethod.invoke(session);
+                
+                if (playbackInfo != null) {
+                    Method getPlaybackTypeMethod = playbackInfo.getClass().getMethod("getPlaybackType");
+                    int playbackType = (int) getPlaybackTypeMethod.invoke(playbackInfo);
+                    System.out.println("      → Playback type: " + (playbackType == 1 ? "Local" : "Remote"));
+                    
+                    Method getCurrentVolumeMethod = playbackInfo.getClass().getMethod("getCurrentVolume");
+                    int currentVolume = (int) getCurrentVolumeMethod.invoke(playbackInfo);
+                    
+                    Method getMaxVolumeMethod = playbackInfo.getClass().getMethod("getMaxVolume");
+                    int maxVolume = (int) getMaxVolumeMethod.invoke(playbackInfo);
+                    
+                    System.out.println("      → Volume: " + currentVolume + "/" + maxVolume);
+                }
+            } catch (Exception e) {
+                System.out.println("      → Playback info unavailable: " + e.getMessage());
+            }
+            
+            // Try to get metadata
+            try {
+                Method getMetadataMethod = session.getClass().getMethod("getMetadata");
+                Object metadata = getMetadataMethod.invoke(session);
+                
+                if (metadata != null) {
+                    Method getStringMethod = metadata.getClass().getMethod("getString", String.class);
+                    
+                    String title = (String) getStringMethod.invoke(metadata, "android.media.metadata.TITLE");
+                    String artist = (String) getStringMethod.invoke(metadata, "android.media.metadata.ARTIST");
+                    
+                    if (title != null || artist != null) {
+                        System.out.println("      → Now playing: " + 
+                            (title != null ? title : "Unknown") + 
+                            (artist != null ? " by " + artist : ""));
+                    }
+                }
+            } catch (Exception e) {
+                // Metadata might not be available or accessible
+                System.out.println("      → Metadata unavailable");
+            }
+            
+        } catch (Exception e) {
+            System.out.println("    Session " + index + " test failed: " + e.getMessage());
         }
     }
 }
