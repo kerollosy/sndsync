@@ -13,6 +13,7 @@ import android.service.notification.StatusBarNotification;
 import android.os.Looper;
 import android.os.Build;
 import android.content.ClipData;
+import android.app.ActivityThread;
 
 public class MetaServer {
     private static final String PACKAGE_NAME = "com.android.shell";
@@ -66,6 +67,8 @@ public class MetaServer {
             
             // Fill app context
             fillAppContext();
+
+            ActivityThread.initializeMainlineModules();
 
             System.out.println("[MetaServer] Android runtime initialized successfully");
         } catch (Exception e) {
