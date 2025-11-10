@@ -257,4 +257,5 @@ public class MetaServer {
         } catch (Exception e) {
             System.out.println("  → MediaSessionManager test failed: " + e.getMessage());
         }
+    }
 }
