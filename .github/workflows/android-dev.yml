@@ -36,6 +36,7 @@ jobs:
             ./src/com/myproject/MetaServer.java \
             ./src/com/myproject/FakeContext.java \
             ./src/android/content/IContentProvider.java \
+            ./src/android/app/ActivityThread.java \
             ./src/com/myproject/ActivityManager.java \
             -d ./bin
 
