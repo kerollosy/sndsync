@@ -51,7 +51,7 @@ if errorlevel 1 (
 )
 
 echo Converting to DEX...
-call "%D8%" "bin\AudioServer.class" --output "bin"
+call "%D8%" "bin\com\audioserver\AudioServer.class" --output "bin"
 if errorlevel 1 (
     echo ERROR: DEX conversion failed
     exit /b 1
