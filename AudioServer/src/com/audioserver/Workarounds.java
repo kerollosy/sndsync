@@ -3,6 +3,7 @@ package com.audioserver;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Application;
+import android.app.ActivityThread;
 import android.content.AttributionSource;
 import android.content.Context;
 import android.content.ContextWrapper;
@@ -78,10 +79,7 @@ public final class Workarounds {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { // API 30 = Android 11
             try {
-                // ActivityThread.initializeMainlineModules();
-                Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
-                Method initMainline = activityThreadClass.getMethod("initializeMainlineModules");
-                initMainline.invoke(null);
+                ActivityThread.initializeMainlineModules();
                 System.out.println("[Workarounds] Mainline modules initialized");
             } catch (Exception e) {
                 System.out.println("[Workarounds] initializeMainlineModules not available, skipping: " + e.getMessage());
