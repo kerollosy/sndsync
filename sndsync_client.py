@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 from io import BytesIO
 
+import keyboard
 import pyaudio
 from PIL import Image
 from colorama import init, Fore, Style
@@ -490,6 +491,11 @@ class SndsyncClient:
         except Exception as e:
             self.logger.error(f"Failed to setup audio: {e}")
             sys.exit(1)
+
+        keyboard.add_hotkey('space', lambda: subprocess.run(self.adb_cmd + ["shell", "input", "keyevent", "85"]))
+        keyboard.add_hotkey('right', lambda: self.send_command("NEXT"))
+        keyboard.add_hotkey('left', lambda: self.send_command("PREVIOUS"))
+        keyboard.add_hotkey('esc', lambda: self.send_command("STOP"))
         
         self.logger.info("Streaming audio... Press Ctrl+C to stop")
         
