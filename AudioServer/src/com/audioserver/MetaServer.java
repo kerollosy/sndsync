@@ -154,36 +154,6 @@ public class MetaServer {
         }
     }
 
-    static Context getSystemContext() {
-        try {
-            Method getSystemContextMethod = activityThreadClass.getDeclaredMethod("getSystemContext");
-            return (Context) getSystemContextMethod.invoke(activityThread);
-        } catch (Exception throwable) {
-            // this is a workaround, so failing is not an error
-            System.err.println("Could not get system context: " + throwable.getMessage());
-            return null;
-        }
-    }
-
-    private static void getActiveNotifications() {
-        try {
-            // Access NotificationManager's internal notification list
-            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            
-            // Use reflection to get active notifications
-            Method getActiveNotificationsMethod = 
-                nm.getClass().getDeclaredMethod("getActiveNotifications");
-            getActiveNotificationsMethod.setAccessible(true);
-            
-            StatusBarNotification[] notifications = 
-                (StatusBarNotification[]) getActiveNotificationsMethod.invoke(nm);
-
-            System.out.println("[MetaServer] Active notifications count: " + notifications.length);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
     private static void initMediaController() throws Exception {
         System.out.println("[MetaServer] Initializing MediaController...");
         if (context == null) {
@@ -191,93 +161,15 @@ public class MetaServer {
             context = FakeContext.get();
         }
 
-        getActiveNotifications();
-
-        System.out.println(context.getPackageManager().getInstalledApplications(128).size() + " installed applications");
-        
-        // Test other system services
-        testSystemServices();
-    }
-    
-    private static void testSystemServices() {
-        System.out.println("[MetaServer] Testing system services...");
-        
-        // List of system services to test with their names
-        String[] services = {
-            "audio",           // AudioManager
-            "window",          // WindowManager  
-            "activity",        // ActivityManager
-            "power",           // PowerManager
-            "wifi",            // WifiManager
-            "connectivity",    // ConnectivityManager
-            "telephony",       // TelephonyManager
-            "location",        // LocationManager
-            "vibrator",        // VibratorManager
-            "input_method",    // InputMethodManager
-            "notification",    // NotificationManager
-            "alarm",           // AlarmManager
-            "media_session"    // MediaSessionManager (might fail)
-        };
-        
-        for (String serviceName : services) {
-            testSystemService(serviceName);
-        }
-    }
-    
-    private static void testSystemService(String serviceName) {
         try {
-            System.out.print("Testing " + serviceName + ": ");
-            Object service = context.getSystemService(serviceName);
+            Object service = context.getSystemService("media_session");
             if (service != null) {
                 System.out.println("✓ Available (" + service.getClass().getSimpleName() + ")");
-                
-                // Special handling for specific services
-                if ("audio".equals(serviceName)) {
-                    testAudioManager(service);
-                } else if ("window".equals(serviceName)) {
-                    testWindowManager(service);
-                }
             } else {
                 System.out.println("✗ Not available");
             }
         } catch (Exception e) {
             System.out.println("✗ Error: " + e.getMessage());
-        }
-    }
-    
-    private static void testAudioManager(Object audioManager) {
-        try {
-            // Test getting volume
-            Method getStreamVolumeMethod = audioManager.getClass().getMethod("getStreamVolume", int.class);
-            int musicVolume = (int) getStreamVolumeMethod.invoke(audioManager, 3); // STREAM_MUSIC = 3
-            System.out.println("  → Music volume: " + musicVolume);
-            
-            // Test getting max volume
-            Method getStreamMaxVolumeMethod = audioManager.getClass().getMethod("getStreamMaxVolume", int.class);
-            int maxMusicVolume = (int) getStreamMaxVolumeMethod.invoke(audioManager, 3);
-            System.out.println("  → Max music volume: " + maxMusicVolume);
-            
-        } catch (Exception e) {
-            System.out.println("  → AudioManager test failed: " + e.getMessage());
-        }
-    }
-    
-    private static void testWindowManager(Object windowManager) {
-        try {
-            Method getDefaultDisplayMethod = windowManager.getClass().getMethod("getDefaultDisplay");
-            Object display = getDefaultDisplayMethod.invoke(windowManager);
-            
-            if (display != null) {
-                Method getWidthMethod = display.getClass().getMethod("getWidth");
-                Method getHeightMethod = display.getClass().getMethod("getHeight");
-                
-                int width = (int) getWidthMethod.invoke(display);
-                int height = (int) getHeightMethod.invoke(display);
-                
-                System.out.println("  → Display size: " + width + "x" + height);
-            }
-        } catch (Exception e) {
-            System.out.println("  → WindowManager test failed: " + e.getMessage());
         }
     }
 }
