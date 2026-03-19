@@ -13,3 +13,4 @@ bin/
 *.keystore
 /dist/
 __pycache__/
+.venv/
