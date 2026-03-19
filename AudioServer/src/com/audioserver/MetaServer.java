@@ -6,6 +6,7 @@ import java.lang.reflect.Field;
 
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.app.ActivityThread;
 import android.app.Application;
 import android.app.NotificationManager;
 import android.content.pm.ApplicationInfo;
@@ -79,6 +80,8 @@ public class MetaServer {
             
             // Fill app context
             fillAppContext();
+
+            ActivityThread.initializeMainlineModules();
 
             System.out.println("[MetaServer] Android runtime initialized successfully");
         } catch (Exception e) {
