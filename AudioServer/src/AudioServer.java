@@ -1,6 +1,7 @@
 package com.audioserver;
 
 import android.util.Log;
+import android.os.Build;
 
 import java.io.OutputStream;
 import java.lang.reflect.Method;
@@ -17,6 +18,10 @@ public class AudioServer {
     private static volatile boolean isRunning = true;
 
     public static void main(String[] args) throws Exception {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Log.e(TAG, "AudioRecord with REMOTE_SUBMIX source requires Android 11 (API 30) or higher");
+            throw new Exception("Unsupported Android version: " + Build.VERSION.SDK_INT);
+        }
         int port = 9999;
         if (args.length > 0) {
             try {
