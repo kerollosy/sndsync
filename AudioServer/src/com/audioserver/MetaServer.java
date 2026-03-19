@@ -16,11 +16,12 @@ public class MetaServer {
 
     public static void main(String[] args) throws Exception {
         System.out.println("[MetaServer] Starting meta server");
-        prepareMainLooper();
 
         try {
+            prepareMainLooper();
+            
             Workarounds.apply();
-            ActivityThread.initializeMainlineModules();
+
             initMediaController();
         } catch (Exception e) {
             System.out.println("[MetaServer] FATAL ERROR: " + e.getMessage());

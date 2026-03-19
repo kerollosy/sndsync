@@ -75,6 +75,18 @@ public final class Workarounds {
         }
         System.out.println("[Workarounds] Filling AppContext");
         fillAppContext();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) { // API 30 = Android 11
+            try {
+                // ActivityThread.initializeMainlineModules();
+                Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+                Method initMainline = activityThreadClass.getMethod("initializeMainlineModules");
+                initMainline.invoke(null);
+                System.out.println("[Workarounds] Mainline modules initialized");
+            } catch (Exception e) {
+                System.out.println("[Workarounds] initializeMainlineModules not available, skipping: " + e.getMessage());
+            }
+        }
     }
 
     private static void fillAppInfo() {
