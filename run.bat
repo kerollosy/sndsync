@@ -3,7 +3,7 @@ REM Audio Server Run Script
 
 setlocal enabledelayedexpansion
 
-set JAR_PATH=./MetaServer.jar
+set JAR_PATH=./lib/MetaServer.jar
 
 echo [*] Pushing MetaServer.jar to device...
 adb push %JAR_PATH% /data/local/tmp/MetaServer.jar
