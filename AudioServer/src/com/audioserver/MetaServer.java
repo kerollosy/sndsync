@@ -8,7 +8,6 @@ import android.content.ComponentName;
 import android.os.Looper;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
-import android.media.session.MediaSession.Token;
 import android.media.session.MediaController.PlaybackInfo;
 import android.media.MediaMetadata;
 
@@ -77,12 +76,6 @@ public class MetaServer {
             try {
                 
                 // Create a ComponentName for our shell package as notification listener
-                // android.content.ComponentName componentName = new android.content.ComponentName(
-                //     PACKAGE_NAME, 
-                //     PACKAGE_NAME + ".NotificationListener"
-                // );
-
-                // Object activeSessions = getActiveSessionsMethod.invoke(mediaSessionManager, componentName);
                 ComponentName componentName = new ComponentName(
                     PACKAGE_NAME,
                     PACKAGE_NAME + ".NotificationListener"
@@ -136,36 +129,19 @@ public class MetaServer {
     private static void testMediaSession(MediaController session, int index) {
         try {
             // Get session info
-            // Method getPackageNameMethod = session.getClass().getMethod("getPackageName");
-            // String packageName = (String) getPackageNameMethod.invoke(session);
             String packageName = session.getPackageName();
-            
-            // Method getSessionTokenMethod = session.getClass().getMethod("getSessionToken");
-            // Object token = getSessionTokenMethod.invoke(session);
-            Token token = session.getSessionToken();
-            
             System.out.println("    Session " + index + ": " + packageName);
             
             // Try to get playback info
             try {
-                // Method getPlaybackInfoMethod = session.getClass().getMethod("getPlaybackInfo");
-                // Object playbackInfo = getPlaybackInfoMethod.invoke(session);
                 PlaybackInfo playbackInfo = session.getPlaybackInfo();
                 
                 if (playbackInfo != null) {
-                    // Method getPlaybackTypeMethod = playbackInfo.getClass().getMethod("getPlaybackType");
-                    // int playbackType = (int) getPlaybackTypeMethod.invoke(playbackInfo);
                     int playbackType = playbackInfo.getPlaybackType();
                     System.out.println("      → Playback type: " + (playbackType == 1 ? "Local" : "Remote"));
                     
-                    // Method getCurrentVolumeMethod = playbackInfo.getClass().getMethod("getCurrentVolume");
-                    // int currentVolume = (int) getCurrentVolumeMethod.invoke(playbackInfo);
                     int currentVolume = playbackInfo.getCurrentVolume();
-                    
-                    // Method getMaxVolumeMethod = playbackInfo.getClass().getMethod("getMaxVolume");
-                    // int maxVolume = (int) getMaxVolumeMethod.invoke(playbackInfo);
                     int maxVolume = playbackInfo.getMaxVolume();
-                    
                     System.out.println("      → Volume: " + currentVolume + "/" + maxVolume);
                 }
             } catch (Exception e) {
@@ -174,16 +150,9 @@ public class MetaServer {
             
             // Try to get metadata
             try {
-                // Method getMetadataMethod = session.getClass().getMethod("getMetadata");
-                // Object metadata = getMetadataMethod.invoke(session);
                 MediaMetadata metadata = session.getMetadata();
                 
                 if (metadata != null) {
-                    // Method getStringMethod = metadata.getClass().getMethod("getString", String.class);
-                    
-                    // String title = (String) getStringMethod.invoke(metadata, "android.media.metadata.TITLE");
-                    // String artist = (String) getStringMethod.invoke(metadata, "android.media.metadata.ARTIST");
-
                     String title = metadata.getString("android.media.metadata.TITLE");
                     String artist = metadata.getString("android.media.metadata.ARTIST");
                     
