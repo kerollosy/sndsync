@@ -266,7 +266,11 @@ class SndsyncClient:
         self.logger.info("Starting AudioServer on device...")
         # Start the server in background
         self.server_process = subprocess.Popen(
-            self.adb_cmd + ["shell", f"CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ AudioServer {self.port}"],
+            self.adb_cmd + [
+                "shell",
+                "CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ com.audioserver.AudioServer "
+                f"{self.port}"
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -284,6 +288,18 @@ class SndsyncClient:
                 self.logger.debug(f"Server STDOUT:\n{stdout}")
             if stderr:
                 self.logger.error(f"Server STDERR:\n{stderr}")
+            
+            logcat_result = subprocess.run(
+                self.adb_cmd + [
+                    "logcat", "-d",          # -d = dump and exit
+                    "-s", "AudioServer:E",   # only AudioServer errors
+                    "-v", "brief"
+                ],
+                capture_output=True, text=True
+            )
+            if logcat_result.stdout.strip():
+                self.logger.error(f"AudioServer logcat errors:\n{logcat_result.stdout.strip()}")
+
             sys.exit(1)
         
         self.logger.debug("AudioServer appears to be running")
