@@ -2,9 +2,15 @@ package com.audioserver;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Field;
+import java.util.List;
 
-import android.app.ActivityThread;
+import android.content.ComponentName;
 import android.os.Looper;
+import android.media.session.MediaController;
+import android.media.session.MediaSessionManager;
+import android.media.session.MediaSession.Token;
+import android.media.session.MediaController.PlaybackInfo;
+import android.media.MediaMetadata;
 
 public class MetaServer {
     private static final String PACKAGE_NAME = "com.android.shell";
@@ -19,7 +25,7 @@ public class MetaServer {
 
         try {
             prepareMainLooper();
-            
+
             Workarounds.apply();
 
             initMediaController();
@@ -52,7 +58,7 @@ public class MetaServer {
         }
 
         try {
-            Object service = context.getSystemService("media_session");
+            MediaSessionManager service = (MediaSessionManager) context.getSystemService("media_session");
             if (service != null) {
                 System.out.println("✓ Available (" + service.getClass().getSimpleName() + ")");
 
@@ -65,27 +71,31 @@ public class MetaServer {
         }
     }
 
-    private static void testMediaSessionManager(Object mediaSessionManager) {
+    private static void testMediaSessionManager(MediaSessionManager mediaSessionManager) {
         try {
             // Test getting active sessions (requires notification listener permission)
             try {
-                Method getActiveSessionsMethod = mediaSessionManager.getClass().getMethod("getActiveSessions", android.content.ComponentName.class);
                 
                 // Create a ComponentName for our shell package as notification listener
-                android.content.ComponentName componentName = new android.content.ComponentName(
-                    PACKAGE_NAME, 
+                // android.content.ComponentName componentName = new android.content.ComponentName(
+                //     PACKAGE_NAME, 
+                //     PACKAGE_NAME + ".NotificationListener"
+                // );
+
+                // Object activeSessions = getActiveSessionsMethod.invoke(mediaSessionManager, componentName);
+                ComponentName componentName = new ComponentName(
+                    PACKAGE_NAME,
                     PACKAGE_NAME + ".NotificationListener"
                 );
                 
-                Object activeSessions = getActiveSessionsMethod.invoke(mediaSessionManager, componentName);
+                List<MediaController> activeSessions = mediaSessionManager.getActiveSessions(componentName);
                 
                 if (activeSessions != null) {
-                    java.util.List<?> sessionList = (java.util.List<?>) activeSessions;
-                    System.out.println("  → Active media sessions: " + sessionList.size());
+                    System.out.println("  → Active media sessions: " + activeSessions.size());
                     
                     // Test each active session
-                    for (int i = 0; i < Math.min(sessionList.size(), 3); i++) { // Limit to first 3
-                        Object session = sessionList.get(i);
+                    for (int i = 0; i < Math.min(activeSessions.size(), 3); i++) { // Limit to first 3
+                        MediaController session = activeSessions.get(i);
                         testMediaSession(session, i);
                     }
                 }
@@ -123,32 +133,38 @@ public class MetaServer {
         }
     }
 
-    private static void testMediaSession(Object session, int index) {
+    private static void testMediaSession(MediaController session, int index) {
         try {
             // Get session info
-            Method getPackageNameMethod = session.getClass().getMethod("getPackageName");
-            String packageName = (String) getPackageNameMethod.invoke(session);
+            // Method getPackageNameMethod = session.getClass().getMethod("getPackageName");
+            // String packageName = (String) getPackageNameMethod.invoke(session);
+            String packageName = session.getPackageName();
             
-            Method getSessionTokenMethod = session.getClass().getMethod("getSessionToken");
-            Object token = getSessionTokenMethod.invoke(session);
+            // Method getSessionTokenMethod = session.getClass().getMethod("getSessionToken");
+            // Object token = getSessionTokenMethod.invoke(session);
+            Token token = session.getSessionToken();
             
             System.out.println("    Session " + index + ": " + packageName);
             
             // Try to get playback info
             try {
-                Method getPlaybackInfoMethod = session.getClass().getMethod("getPlaybackInfo");
-                Object playbackInfo = getPlaybackInfoMethod.invoke(session);
+                // Method getPlaybackInfoMethod = session.getClass().getMethod("getPlaybackInfo");
+                // Object playbackInfo = getPlaybackInfoMethod.invoke(session);
+                PlaybackInfo playbackInfo = session.getPlaybackInfo();
                 
                 if (playbackInfo != null) {
-                    Method getPlaybackTypeMethod = playbackInfo.getClass().getMethod("getPlaybackType");
-                    int playbackType = (int) getPlaybackTypeMethod.invoke(playbackInfo);
+                    // Method getPlaybackTypeMethod = playbackInfo.getClass().getMethod("getPlaybackType");
+                    // int playbackType = (int) getPlaybackTypeMethod.invoke(playbackInfo);
+                    int playbackType = playbackInfo.getPlaybackType();
                     System.out.println("      → Playback type: " + (playbackType == 1 ? "Local" : "Remote"));
                     
-                    Method getCurrentVolumeMethod = playbackInfo.getClass().getMethod("getCurrentVolume");
-                    int currentVolume = (int) getCurrentVolumeMethod.invoke(playbackInfo);
+                    // Method getCurrentVolumeMethod = playbackInfo.getClass().getMethod("getCurrentVolume");
+                    // int currentVolume = (int) getCurrentVolumeMethod.invoke(playbackInfo);
+                    int currentVolume = playbackInfo.getCurrentVolume();
                     
-                    Method getMaxVolumeMethod = playbackInfo.getClass().getMethod("getMaxVolume");
-                    int maxVolume = (int) getMaxVolumeMethod.invoke(playbackInfo);
+                    // Method getMaxVolumeMethod = playbackInfo.getClass().getMethod("getMaxVolume");
+                    // int maxVolume = (int) getMaxVolumeMethod.invoke(playbackInfo);
+                    int maxVolume = playbackInfo.getMaxVolume();
                     
                     System.out.println("      → Volume: " + currentVolume + "/" + maxVolume);
                 }
@@ -158,14 +174,18 @@ public class MetaServer {
             
             // Try to get metadata
             try {
-                Method getMetadataMethod = session.getClass().getMethod("getMetadata");
-                Object metadata = getMetadataMethod.invoke(session);
+                // Method getMetadataMethod = session.getClass().getMethod("getMetadata");
+                // Object metadata = getMetadataMethod.invoke(session);
+                MediaMetadata metadata = session.getMetadata();
                 
                 if (metadata != null) {
-                    Method getStringMethod = metadata.getClass().getMethod("getString", String.class);
+                    // Method getStringMethod = metadata.getClass().getMethod("getString", String.class);
                     
-                    String title = (String) getStringMethod.invoke(metadata, "android.media.metadata.TITLE");
-                    String artist = (String) getStringMethod.invoke(metadata, "android.media.metadata.ARTIST");
+                    // String title = (String) getStringMethod.invoke(metadata, "android.media.metadata.TITLE");
+                    // String artist = (String) getStringMethod.invoke(metadata, "android.media.metadata.ARTIST");
+
+                    String title = metadata.getString("android.media.metadata.TITLE");
+                    String artist = metadata.getString("android.media.metadata.ARTIST");
                     
                     if (title != null || artist != null) {
                         System.out.println("      → Now playing: " + 
