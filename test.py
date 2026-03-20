@@ -47,8 +47,8 @@ KEYEVENT = {
 
 # Android PlaybackState → WinRT MediaPlaybackStatus
 ANDROID_STATE_MAP = {
-    2: MediaPlaybackStatus.STOPPED,
-    3: MediaPlaybackStatus.PAUSED,
+    2: MediaPlaybackStatus.PAUSED,    # Poweramp paused
+    3: MediaPlaybackStatus.PLAYING,   # Poweramp playing
     4: MediaPlaybackStatus.PLAYING,
     6: MediaPlaybackStatus.CHANGING,
 }
@@ -315,10 +315,11 @@ def run(
     }
 
     SMTC_BUTTON_MAP = {
-        0: "playpause",
+        0: "playpause",   # Play button shown when paused
+        1: "playpause",   # Pause button shown when playing
+        2: "stop",
         6: "next",
         7: "prev",
-        5: "stop",
     }
 
     def on_button(sender, event_args):
@@ -327,6 +328,16 @@ def run(
             logger.debug(f"Unknown SMTC button: {event_args.button}")
             return
         logger.info(f"  ← SMTC: {btn}")
+
+        # Optimistically flip the SMTC state so the button updates instantly
+        if btn == "playpause":
+            current = smtc.playback_status
+            smtc.playback_status = (
+                MediaPlaybackStatus.PAUSED
+                if current == MediaPlaybackStatus.PLAYING
+                else MediaPlaybackStatus.PLAYING
+            )
+
         threading.Thread(
             target=send_keyevent, args=(adb_cmd, btn, logger), daemon=True
         ).start()
