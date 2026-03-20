@@ -70,7 +70,7 @@ echo [*] JAR location: %cd%\lib\MetaServer.jar
 echo.
 
 echo [*] Pushing MetaServer.jar to device...
-adb push %JAR_PATH% /data/local/tmp/MetaServer.jar
+adb -s 192.168.0.189:5555 push %JAR_PATH% /data/local/tmp/MetaServer.jar
 if errorlevel 1 (
 echo [ERROR] Failed to push JAR
 pause
@@ -79,6 +79,6 @@ exit /b 1
 
 echo [*] Starting MetaServer in new window...
 REM Using the fully-qualified class name (FQN)
-adb shell "CLASSPATH=/data/local/tmp/MetaServer.jar app_process /data/local/tmp/ com.audioserver.MetaServer %AUDIO_PORT%"
+adb -s 192.168.0.189:5555 shell "CLASSPATH=/data/local/tmp/MetaServer.jar app_process /data/local/tmp/ com.audioserver.MetaServer %AUDIO_PORT%"
 
 endlocal
