@@ -1,17 +1,17 @@
 package com.audioserver;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
 
 import android.content.ComponentName;
+import android.graphics.Bitmap;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaController.PlaybackInfo;
@@ -19,19 +19,18 @@ import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 
 public class MetaServer {
     private static final String PACKAGE_NAME = "com.android.shell";
     private static final int DEFAULT_PORT = 9998;
 
-    // Connected clients — thread-safe so the callback can write without locking
     private static final Set<PrintWriter> clients = new CopyOnWriteArraySet<>();
 
     private static FakeContext context;
     private static Handler mainHandler;
     private static MediaSessionManager sessionManager;
 
-    // The single session we are currently tracking
     private static MediaController trackedController;
     private static MediaController.Callback activeCallback;
 
@@ -59,7 +58,6 @@ public class MetaServer {
 
         initSessionTracking();
 
-        // Run the TCP server on a background thread so THIS thread can pump the looper
         final int finalPort = port;
         new Thread(() -> {
             try {
@@ -70,12 +68,11 @@ public class MetaServer {
             }
         }, "tcp-server").start();
 
-        // Pump the main looper — this is what actually delivers MediaController callbacks
         Looper.loop();
     }
 
     // -------------------------------------------------------------------------
-    // Looper bootstrap (same pattern as AudioServer)
+    // Looper bootstrap
     // -------------------------------------------------------------------------
 
     private static void prepareMainLooper() {
@@ -98,44 +95,36 @@ public class MetaServer {
     private static void initSessionTracking() {
         sessionManager = (MediaSessionManager) context.getSystemService("media_session");
         if (sessionManager == null) {
-            System.out.println("[MetaServer] MediaSessionManager unavailable — metadata won't be sent");
+            System.out.println("[MetaServer] MediaSessionManager unavailable");
             return;
         }
 
         ComponentName listenerComponent = new ComponentName(
                 PACKAGE_NAME, PACKAGE_NAME + ".NotificationListener");
 
-        // Watch for session list changes
         sessionManager.addOnActiveSessionsChangedListener(controllers -> {
             System.out.println("[MetaServer] Sessions changed: "
                     + (controllers != null ? controllers.size() : 0) + " active");
             pickBestSession(controllers);
         }, listenerComponent, mainHandler);
 
-        // Seed with whatever is already active
         try {
             List<MediaController> initial = sessionManager.getActiveSessions(listenerComponent);
             pickBestSession(initial);
         } catch (SecurityException e) {
-            System.out.println("[MetaServer] No notification-listener permission; waiting for sessions passively");
+            System.out.println("[MetaServer] No notification-listener permission; waiting passively");
         }
     }
 
-    /**
-     * Choose the first (highest-priority) session from the list and start
-     * tracking it.  If the list is empty, detach from the current session.
-     */
     private static void pickBestSession(List<MediaController> controllers) {
         MediaController best = (controllers != null && !controllers.isEmpty())
                 ? controllers.get(0) : null;
 
-        // Same session — nothing to do
         if (best != null && trackedController != null
                 && best.getSessionToken().equals(trackedController.getSessionToken())) {
             return;
         }
 
-        // Detach old callback
         if (trackedController != null && activeCallback != null) {
             trackedController.unregisterCallback(activeCallback);
             trackedController = null;
@@ -151,12 +140,10 @@ public class MetaServer {
         System.out.println("[MetaServer] Tracking session: " + best.getPackageName());
         broadcast(buildEvent("session", "\"package\":\"" + best.getPackageName() + "\""));
 
-        // Push current state immediately so the client isn't waiting for a change
         pushMetadata(best.getMetadata());
         pushPlaybackState(best.getPlaybackState());
         pushVolume(best.getPlaybackInfo());
 
-        // Register callback for future changes
         activeCallback = new MediaController.Callback() {
             @Override
             public void onMetadataChanged(MediaMetadata metadata) {
@@ -191,19 +178,48 @@ public class MetaServer {
 
     private static void pushMetadata(MediaMetadata metadata) {
         if (metadata == null) {
-            broadcast(buildEvent("metadata", "\"title\":null,\"artist\":null,\"album\":null,\"duration\":0"));
+            broadcast(buildEvent("metadata",
+                    "\"title\":null,\"artist\":null,\"album\":null,\"duration\":0,\"art\":null"));
             return;
         }
         String title  = jsonString(metadata.getString(MediaMetadata.METADATA_KEY_TITLE));
         String artist = jsonString(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST));
         String album  = jsonString(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM));
         long duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
+        String art    = artToBase64(metadata);
 
         broadcast(buildEvent("metadata",
-                "\"title\":" + title
+                "\"title\":"    + title
                 + ",\"artist\":" + artist
-                + ",\"album\":" + album
-                + ",\"duration\":" + duration));
+                + ",\"album\":"  + album
+                + ",\"duration\":" + duration
+                + ",\"art\":"    + art));
+    }
+
+    /**
+     * Extract album art, scale to ≤300×300, compress to JPEG, return as base64 JSON string.
+     * Returns JSON null if unavailable.
+     */
+    private static String artToBase64(MediaMetadata metadata) {
+        try {
+            Bitmap bitmap = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
+            if (bitmap == null)
+                bitmap = metadata.getBitmap(MediaMetadata.METADATA_KEY_ART);
+            if (bitmap == null)
+                return "null";
+
+            if (bitmap.getWidth() > 300 || bitmap.getHeight() > 300) {
+                bitmap = Bitmap.createScaledBitmap(bitmap, 300, 300, true);
+            }
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos);
+            String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+            return "\"" + b64 + "\"";
+        } catch (Exception e) {
+            System.out.println("[MetaServer] Art extraction failed: " + e.getMessage());
+            return "null";
+        }
     }
 
     private static void pushPlaybackState(PlaybackState state) {
@@ -212,36 +228,29 @@ public class MetaServer {
             return;
         }
         broadcast(buildEvent("playback",
-                "\"state\":" + state.getState()
+                "\"state\":"    + state.getState()
                 + ",\"position\":" + state.getPosition()
-                + ",\"speed\":" + state.getPlaybackSpeed()));
+                + ",\"speed\":"   + state.getPlaybackSpeed()));
     }
 
     private static void pushVolume(PlaybackInfo info) {
         if (info == null) return;
         broadcast(buildEvent("volume",
                 "\"current\":" + info.getCurrentVolume()
-                + ",\"max\":" + info.getMaxVolume()));
+                + ",\"max\":"  + info.getMaxVolume()));
     }
 
-    /**
-     * Wraps key-value pairs into a minimal JSON line:
-     *   {"event":"<type>",<body>}
-     */
     private static String buildEvent(String type, String body) {
         return "{\"event\":\"" + type + "\"," + body + "}";
     }
 
-    /** Null-safe JSON string literal (null → JSON null, otherwise quoted + escaped). */
     private static String jsonString(String s) {
         if (s == null) return "null";
-        // Escape backslash and double-quote; replace control chars with spaces
-        String escaped = s.replace("\\", "\\\\")
-                          .replace("\"", "\\\"")
-                          .replace("\n", " ")
-                          .replace("\r", " ")
-                          .replace("\t", " ");
-        return "\"" + escaped + "\"";
+        return "\"" + s.replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\n", " ")
+                        .replace("\r", " ")
+                        .replace("\t", " ") + "\"";
     }
 
     // -------------------------------------------------------------------------
@@ -262,34 +271,25 @@ public class MetaServer {
 
     private static void handleClient(Socket socket) {
         try {
-            PrintWriter writer = new PrintWriter(socket.getOutputStream(), /* autoFlush= */ true);
+            PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
             clients.add(writer);
 
-            // Immediately push current state to the new client
             if (trackedController != null) {
                 writer.println(buildEvent("session",
                         "\"package\":\"" + trackedController.getPackageName() + "\""));
                 pushSnapshotTo(writer);
             }
 
-            // Block until the client disconnects (we detect it on the next write)
-            // A simple keep-alive: wait for the socket to close
-            socket.getInputStream().read(); // blocks; -1 on EOF / disconnect
+            socket.getInputStream().read(); // block until client disconnects
 
         } catch (IOException ignored) {
-            // Client closed connection — normal
         } finally {
-            // Clean up: remove writer (next broadcast to it will also fail, but
-            // CopyOnWriteArraySet makes that safe to handle in broadcast())
-            try {
-                socket.close();
-            } catch (IOException ignored) {}
+            try { socket.close(); } catch (IOException ignored) {}
             removeClosedClients();
             System.out.println("[MetaServer] Client disconnected: " + socket.getInetAddress());
         }
     }
 
-    /** Push a full state snapshot to a single newly-connected client. */
     private static void pushSnapshotTo(PrintWriter writer) {
         if (trackedController == null) return;
         MediaMetadata metadata = trackedController.getMetadata();
@@ -298,22 +298,26 @@ public class MetaServer {
             String artist = jsonString(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST));
             String album  = jsonString(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM));
             long duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
+            String art    = artToBase64(metadata);
             writer.println(buildEvent("metadata",
-                    "\"title\":" + title + ",\"artist\":" + artist
-                    + ",\"album\":" + album + ",\"duration\":" + duration));
+                    "\"title\":"    + title
+                    + ",\"artist\":" + artist
+                    + ",\"album\":"  + album
+                    + ",\"duration\":" + duration
+                    + ",\"art\":"    + art));
         }
         PlaybackState ps = trackedController.getPlaybackState();
         if (ps != null) {
             writer.println(buildEvent("playback",
-                    "\"state\":" + ps.getState()
+                    "\"state\":"    + ps.getState()
                     + ",\"position\":" + ps.getPosition()
-                    + ",\"speed\":" + ps.getPlaybackSpeed()));
+                    + ",\"speed\":"   + ps.getPlaybackSpeed()));
         }
         PlaybackInfo vi = trackedController.getPlaybackInfo();
         if (vi != null) {
             writer.println(buildEvent("volume",
                     "\"current\":" + vi.getCurrentVolume()
-                    + ",\"max\":" + vi.getMaxVolume()));
+                    + ",\"max\":"  + vi.getMaxVolume()));
         }
     }
 
@@ -321,13 +325,12 @@ public class MetaServer {
     // Fan-out broadcast
     // -------------------------------------------------------------------------
 
-    /** Send a JSON line to every connected client, pruning dead connections. */
     private static void broadcast(String message) {
-        System.out.println("[MetaServer] → " + message);
+        System.out.println("[MetaServer] → " + message.substring(0,
+                Math.min(message.length(), 120)));  // truncate art in logs
         for (PrintWriter writer : clients) {
             writer.println(message);
             if (writer.checkError()) {
-                // Socket gone — will be cleaned up next connect/disconnect cycle
                 clients.remove(writer);
             }
         }
