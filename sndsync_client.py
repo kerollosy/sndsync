@@ -1,6 +1,6 @@
 """
 sndsync - Android Audio Streaming Client
-Stream audio from Android devices to desktop in real-time with metadata display.
+Stream audio from Android devices to desktop in real-time.
 """
 
 import subprocess
@@ -11,16 +11,10 @@ import sys
 import argparse
 import logging
 import struct
-import json
-import base64
-import threading
 from pathlib import Path
 from typing import Optional
-from io import BytesIO
 
-import keyboard
 import pyaudio
-from PIL import Image
 from colorama import init, Fore, Style
 
 init(autoreset=True)
@@ -46,8 +40,7 @@ class SndsyncClient:
     """Android audio streaming client using ADB and socket communication."""
     
     def __init__(self, port: int = 9999, device_serial: Optional[str] = None, 
-            jar_path: Optional[str] = None, apk_path: Optional[str] = None, 
-            debug: bool = False):
+                jar_path: Optional[str] = None, debug: bool = False):
         """
         Initialize the sndsync client.
         
@@ -55,17 +48,12 @@ class SndsyncClient:
             port: Local port for audio forwarding
             device_serial: Optional device serial for multiple devices
             jar_path: Path to AudioServer.jar file
-            apk_path: Path to MetadataApp.apk file
             debug: Enable debug logging
         """
-        self.METADATA_PACKAGE = "com.kerollosy.metadata"
-
         self.running = True
         self.port = port
-        self.metadata_port = 9998  # Hardcoded for now
         self.device_serial = device_serial
         self.jar_path = Path(jar_path) if jar_path else Path("AudioServer.jar")
-        self.apk_path = Path(apk_path) if apk_path else Path("MetadataApp.apk")
         
         # Setup logging
         self.logger = logging.getLogger("sndsync")
@@ -81,7 +69,6 @@ class SndsyncClient:
         
         # Resources
         self.socket = None
-        self.metadata_socket = None
         self.pyaudio_instance = None
         self.audio_stream = None
         self.server_process = None
@@ -90,10 +77,6 @@ class SndsyncClient:
         self.sample_rate = None
         self.channels = None
         self.audio_format = None
-        
-        # Metadata tracking
-        self.last_metadata = None
-        self.metadata_thread = None
 
         # Build ADB command prefix
         self.adb_cmd = ["adb"]
@@ -105,109 +88,8 @@ class SndsyncClient:
         self._check_adb()
         self._check_device()
         self._setup_audio_server()
-        
-        self.logger.info("Starting audio stream (metadata setup in background)...")
-        
-        # Start metadata setup in a separate thread so it doesn't block audio streaming
-        metadata_thread_setup = threading.Thread(target=self._setup_metadata_in_background, daemon=True)
-        metadata_thread_setup.start()
-        
         self._connect()
         self._stream()
-    
-    def _setup_metadata_in_background(self):
-        """Setup metadata app and listener in a background thread."""
-        try:
-            metadata_available = self._setup_metadata_app()
-            if metadata_available:
-                self.logger.info("Waiting for notification permission and service to start...")
-                metadata_available = self._wait_for_metadata_service()
-                if metadata_available:
-                    time.sleep(1)  # Give device time to settle
-                    self._setup_metadata_forwarding()
-                    self.metadata_thread = threading.Thread(target=self._metadata_listener, daemon=True)
-                    self.metadata_thread.start()
-        except Exception as e:
-            self.logger.debug(f"Background metadata setup error: {e}")
-
-    def _check_notification_permission(self) -> bool:
-        """
-        Check if notification permission is granted for the metadata app.
-        
-        Returns:
-            True if notification listener is enabled, False otherwise
-        """
-        result = subprocess.run(
-            self.adb_cmd + ["shell", "settings", "get", "secure", "enabled_notification_listeners"],
-            capture_output=True, text=True
-        )
-        
-        if self.METADATA_PACKAGE in result.stdout:
-            self.logger.debug("Notification permission detected")
-            return True
-        
-        return False
-
-    def _is_metadata_service_running(self) -> bool:
-        """
-        Check if the metadata app's service is running.
-        
-        Returns:
-            True if service is detected, False otherwise
-        """
-        result = subprocess.run(
-            self.adb_cmd + ["shell", "dumpsys", "activity", "services", self.METADATA_PACKAGE],
-            capture_output=True,
-            text=True
-        )
-        
-        return "MetaNotificationListener" in result.stdout
-
-    def _wait_for_metadata_service(self, timeout: int = 60):
-        """
-        Wait for notification permission to be granted and service to start.
-        
-        Args:
-            timeout: Maximum seconds to wait
-        """
-        start_time = time.time()
-        
-        self.logger.info("=" * 60)
-        self.logger.info("IMPORTANT: Please grant notification access to the metadata app!")
-        self.logger.info("1. Go to Settings > Apps > Sndsync Metadata")
-        self.logger.info("2. Find 'Permissions' or 'App Permissions'")
-        self.logger.info("3. Enable 'Notification access' or 'Notification listener' permission")
-        self.logger.info("4. The app will automatically start and detect music metadata")
-        self.logger.info("=" * 60)
-        
-        permission_granted = False
-        service_running = False
-        
-        while time.time() - start_time < timeout:
-            if not permission_granted:
-                permission_granted = self._check_notification_permission()
-                if permission_granted:
-                    self.logger.info("✓ Notification permission granted")
-            
-            if permission_granted and not service_running:
-                service_running = self._is_metadata_service_running()
-                if service_running:
-                    self.logger.info("✓ Metadata service started")
-            
-            if permission_granted and service_running:
-                self.logger.info("Metadata service ready")
-                return True
-            
-            time.sleep(1)
-        
-        self.logger.warning(f"Timeout waiting for metadata service (waited {timeout}s)")
-        if not permission_granted:
-            self.logger.warning("Notification permission was not granted")
-        if not service_running:
-            self.logger.warning("Metadata service did not start")
-
-        return False
-        
 
     def _check_adb(self):
         """Verify ADB is installed and accessible."""
@@ -267,11 +149,7 @@ class SndsyncClient:
         self.logger.info("Starting AudioServer on device...")
         # Start the server in background
         self.server_process = subprocess.Popen(
-            self.adb_cmd + [
-                "shell",
-                "CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ com.audioserver.AudioServer "
-                f"{self.port}"
-            ],
+            self.adb_cmd + ["shell", f"CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ AudioServer {self.port}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -289,145 +167,9 @@ class SndsyncClient:
                 self.logger.debug(f"Server STDOUT:\n{stdout}")
             if stderr:
                 self.logger.error(f"Server STDERR:\n{stderr}")
-            
-            logcat_result = subprocess.run(
-                self.adb_cmd + [
-                    "logcat", "-d",          # -d = dump and exit
-                    "-s", "AudioServer:E",   # only AudioServer errors
-                    "-v", "brief"
-                ],
-                capture_output=True, text=True
-            )
-            if logcat_result.stdout.strip():
-                self.logger.error(f"AudioServer logcat errors:\n{logcat_result.stdout.strip()}")
-
             sys.exit(1)
         
         self.logger.debug("AudioServer appears to be running")
-
-    def _setup_metadata_app(self):
-        """Install and setup the metadata collection app."""
-        if not self.apk_path.exists():
-            self.logger.warning(f"MetadataApp.apk not found at: {self.apk_path}")
-            self.logger.warning("Metadata collection will not be available")
-            self.logger.warning("Specify APK path with --apk or place MetadataApp.apk in current directory")
-            return False
-        
-        self.logger.info("Installing metadata app...")
-        result = subprocess.run(
-            self.adb_cmd + ["install", "-r", str(self.apk_path)],
-            capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            self.logger.warning("Failed to install metadata app")
-            self.logger.debug(result.stderr)
-            return False
-        
-        self.logger.info("Metadata app installed successfully")
-        return True
-    
-    def _setup_metadata_forwarding(self):
-        """Setup port forwarding for metadata."""
-        self.logger.info(f"Setting up port forwarding for metadata port {self.metadata_port}...")
-        result = subprocess.run(
-            self.adb_cmd + ["forward", f"tcp:{self.metadata_port}", f"tcp:{self.metadata_port}"],
-            capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            self.logger.warning("Failed to setup metadata port forwarding")
-        else:
-            self.logger.debug("Metadata port forwarding established")
-    
-    def _metadata_listener(self):
-        """Listen for metadata updates in a separate thread."""
-        try:
-            self.logger.debug("Starting metadata listener thread...")
-            time.sleep(1)  # Give time for connections to establish
-            
-            self.metadata_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.metadata_socket.settimeout(2.0)
-            
-            try:
-                self.logger.debug(f"Connecting to metadata server on port {self.metadata_port}...")
-                self.metadata_socket.connect(("127.0.0.1", self.metadata_port))
-                self.logger.info("Connected to metadata server")
-            except (socket.timeout, ConnectionRefusedError):
-                self.logger.debug("Metadata server not available (this is optional)")
-                return
-            
-            buffer = ""
-            while self.running:
-                try:
-                    data = self.metadata_socket.recv(1024).decode('utf-8')
-                    if not data:
-                        break
-                    
-                    buffer += data
-                    
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        if line.strip():
-                            try:
-                                metadata = json.loads(line)
-                                
-                                if metadata == self.last_metadata:
-                                    continue
-                                
-                                self.last_metadata = metadata
-                                self._display_metadata(metadata)
-                                
-                            except json.JSONDecodeError:
-                                pass
-                
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    self.logger.debug(f"Metadata listener error: {e}")
-                    break
-        
-        except Exception as e:
-            self.logger.debug(f"Metadata listener thread error: {e}")
-        finally:
-            if self.metadata_socket:
-                try:
-                    self.metadata_socket.close()
-                except:
-                    pass
-    
-    def _display_metadata(self, metadata):
-        """Display metadata in a formatted way."""
-        self.logger.info("="*60)
-        self.logger.info("Now Playing:")
-        self.logger.info(f"  Package: {metadata.get('package', 'Unknown')}")
-        self.logger.info(f"  Title:   {metadata.get('title', 'Unknown')}")
-        self.logger.info(f"  Artist:  {metadata.get('artist', 'Unknown')}")
-        self.logger.info(f"  Album:   {metadata.get('album', 'Unknown')}")
-        
-        duration = metadata.get('duration', 0)
-        if duration:
-            minutes = duration // 1000 // 60
-            self.logger.info(f"  Duration: {minutes} minutes")
-        
-        if metadata.get('albumArt'):
-            album_art_thread = threading.Thread(
-                target=self._display_album_art,
-                args=(metadata['albumArt'],),
-                daemon=True
-            )
-            album_art_thread.start()
-        
-        self.logger.info("="*60)
-
-    def _display_album_art(self, album_art_data):
-        """Display album art in a separate thread to avoid blocking."""
-        try:
-            img_data = base64.b64decode(album_art_data)
-            img = Image.open(BytesIO(img_data))
-            img.show()
-        except Exception as e:
-            self.logger.debug(f"Failed to display album art: {e}")
     
     def _connect(self):
         """Connect to the audio stream."""
@@ -491,11 +233,6 @@ class SndsyncClient:
         except Exception as e:
             self.logger.error(f"Failed to setup audio: {e}")
             sys.exit(1)
-
-        keyboard.add_hotkey('space', lambda: subprocess.run(self.adb_cmd + ["shell", "input", "keyevent", "85"]))
-        keyboard.add_hotkey('right', lambda: self.send_command("NEXT"))
-        keyboard.add_hotkey('left', lambda: self.send_command("PREVIOUS"))
-        keyboard.add_hotkey('esc', lambda: self.send_command("STOP"))
         
         self.logger.info("Streaming audio... Press Ctrl+C to stop")
         
@@ -571,32 +308,18 @@ class SndsyncClient:
             except:
                 pass
         
+        # Clean up port forwarding
         try:
             self.logger.debug(f"Removing port forwarding for {self.port}...")
-            subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.port}"], 
-                        capture_output=True, timeout=5)
+            self._run_adb_command(["forward", "--remove", f"tcp:{self.port}"], check_returncode=False)
         except:
             pass
-        
-        if self.metadata_socket:
-            try:
-                self.logger.debug("Closing metadata socket...")
-                self.metadata_socket.close()
-            except:
-                pass
-
-            try:
-                self.logger.debug(f"Removing port forwarding for metadata {self.metadata_port}...")
-                subprocess.run(self.adb_cmd + ["forward", "--remove", f"tcp:{self.metadata_port}"], 
-                            capture_output=True, timeout=5)
-            except:
-                pass
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Stream audio from Android device to desktop with metadata display"
+        description="Stream audio from Android device to desktop"
     )
     parser.add_argument(
         "-s", "--serial",
@@ -606,15 +329,11 @@ def main():
         "-p", "--port",
         type=int,
         default=9999,
-        help="Local port for audio forwarding (default: 9999)"
+        help="Local port for forwarding (default: 9999)"
     )
     parser.add_argument(
         "-j", "--jar",
         help="Path to AudioServer.jar file (default: ./AudioServer.jar)"
-    )
-    parser.add_argument(
-        "-a", "--apk",
-        help="Path to MetadataApp.apk file (default: ./MetadataApp.apk)"
     )
     parser.add_argument(
         "-d", "--debug",
@@ -628,7 +347,6 @@ def main():
         port=args.port,
         device_serial=args.serial,
         jar_path=args.jar,
-        apk_path=args.apk,
         debug=args.debug
     )
     
