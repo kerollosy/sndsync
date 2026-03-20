@@ -215,6 +215,8 @@ def smtc_update(smtc, updater, state: dict, logger: logging.Logger):
         tl.end_time      = timedelta(milliseconds=duration)
         smtc.update_timeline_properties(tl)
 
+    updater.thumbnail = None # always clear first
+
     if art_b64:
         try:
             img_bytes = base64.b64decode(art_b64)
