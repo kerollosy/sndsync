@@ -13,18 +13,28 @@ import android.media.MediaMetadata;
 
 public class MetaServer {
     private static final String PACKAGE_NAME = "com.android.shell";
+    private static final int DEFAULT_PORT = 9998;
 
     private static FakeContext context;
 
     public static void main(String[] args) throws Exception {
-        System.out.println("[MetaServer] Starting meta server");
+        int port = DEFAULT_PORT;
+        if (args.length > 0) {
+            try {
+                port = Integer.parseInt(args[0]);
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid port number: " + args[0] + ", using default: " + port);
+            }
+        }
+
+        System.out.println("[MetaServer] Starting meta server on port " + port);
 
         try {
             prepareMainLooper();
 
             Workarounds.apply();
 
-            initMediaController();
+            initMediaSessionManager();
         } catch (Exception e) {
             System.out.println("[MetaServer] FATAL ERROR: " + e.getMessage());
             e.printStackTrace();
@@ -46,80 +56,46 @@ public class MetaServer {
         }
     }
 
-    private static void initMediaController() throws Exception {
-        System.out.println("[MetaServer] Initializing MediaController...");
+    private static void initMediaSessionManager() throws Exception {
+        System.out.println("[MetaServer] Initializing MediaSessionManager...");
         if (context == null) {
             System.out.println("[MetaServer] Using FakeContext");
             context = FakeContext.get();
         }
 
-        try {
-            MediaSessionManager service = (MediaSessionManager) context.getSystemService("media_session");
-            if (service != null) {
-                System.out.println("✓ Available (" + service.getClass().getSimpleName() + ")");
+        MediaSessionManager service = (MediaSessionManager) context.getSystemService("media_session");
+        if (service != null) {
+            System.out.println("✓ Available (" + service.getClass().getSimpleName() + ")");
 
-                testMediaSessionManager(service);
-            } else {
-                System.out.println("✗ Not available");
-            }
-        } catch (Exception e) {
-            System.out.println("✗ Error: " + e.getMessage());
+            testMediaSessionManager(service);
+        } else {
+            System.out.println("✗ Not available");
         }
+
     }
 
     private static void testMediaSessionManager(MediaSessionManager mediaSessionManager) {
+        MediaController primarySession = getPrimarySession(mediaSessionManager);
+        if (primarySession != null) {
+            testMediaSession(primarySession, 0);
+        } else {
+            System.out.println("    No active sessions found.");
+        }
+    }
+
+    private static MediaController getPrimarySession(MediaSessionManager mediaSessionManager) {
         try {
-            // Test getting active sessions (requires notification listener permission)
-            try {
-                
-                // Create a ComponentName for our shell package as notification listener
-                ComponentName componentName = new ComponentName(
+            ComponentName componentName = new ComponentName(
                     PACKAGE_NAME,
                     PACKAGE_NAME + ".NotificationListener"
-                );
-                
-                List<MediaController> activeSessions = mediaSessionManager.getActiveSessions(componentName);
-                
-                if (activeSessions != null) {
-                    System.out.println("  → Active media sessions: " + activeSessions.size());
-                    
-                    // Test each active session
-                    for (int i = 0; i < Math.min(activeSessions.size(), 3); i++) { // Limit to first 3
-                        MediaController session = activeSessions.get(i);
-                        testMediaSession(session, i);
-                    }
-                }
-            } catch (SecurityException e) {
-                System.out.println("  → Active sessions require notification listener permission: " + e.getMessage());
-            } catch (Exception e) {
-                System.out.println("  → Active sessions test failed: " + e.getMessage());
+            );
+            List<MediaController> sessions = mediaSessionManager.getActiveSessions(componentName);
+            if (sessions == null || sessions.isEmpty()) {
+                return null;
             }
-            
-            // Test getting session manager callbacks (if available)
-            try {
-                Method addOnActiveSessionsChangedListenerMethod = mediaSessionManager.getClass().getMethod(
-                    "addOnActiveSessionsChangedListener", 
-                    Class.forName("android.media.session.MediaSessionManager$OnActiveSessionsChangedListener"),
-                    android.content.ComponentName.class
-                );
-                System.out.println("  → Session change listener support: Available");
-            } catch (NoSuchMethodException e) {
-                System.out.println("  → Session change listener support: Not available");
-            } catch (ClassNotFoundException e) {
-                System.out.println("  → Session change listener class not found");
-            }
-            
-            // Test if we can create a media session (might require different permissions)
-            try {
-                Method createSessionMethod = mediaSessionManager.getClass().getMethod("createSession", String.class);
-                // Don't actually create one, just check if method exists
-                System.out.println("  → Session creation support: Available");
-            } catch (NoSuchMethodException e) {
-                System.out.println("  → Session creation support: Not available");
-            }
-            
-        } catch (Exception e) {
-            System.out.println("  → MediaSessionManager test failed: " + e.getMessage());
+            return sessions.get(0);
+        } catch (Throwable t) {
+            return null;
         }
     }
 
