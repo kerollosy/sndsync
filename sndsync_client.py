@@ -3,8 +3,10 @@ sndsync - Android Audio Streaming Client
 Stream audio from Android devices to desktop in real-time.
 """
 
+import json
 import subprocess
 import socket
+import threading
 import time
 import signal
 import sys
@@ -40,20 +42,28 @@ class SndsyncClient:
     """Android audio streaming client using ADB and socket communication."""
     
     def __init__(self, port: int = 9999, device_serial: Optional[str] = None, 
-                jar_audio_path: Optional[str] = None, debug: bool = False):
+                jar_audio_path: Optional[str] = None, jar_meta_path: Optional[str] = None,
+                debug: bool = False):
         """
         Initialize the sndsync client.
         
         Args:
             port: Local port for audio forwarding
             device_serial: Optional device serial for multiple devices
-            jar_audio_path: Path to AudioServer.jar file (for audio data)
+            jar_audio_path: Path to AudioServer.jar file (for audio data), optional
+            jar_meta_path: Path to MetaServer.jar file (for metadata), optional
             debug: Enable debug logging
         """
         self.running = True
         self.audio_port = port
+        self.meta_port = 9998
         self.device_serial = device_serial
-        self.jar_audio_path = Path(jar_audio_path) if jar_audio_path else Path("AudioServer.jar")
+        self.jar_audio_path = Path(jar_audio_path) if jar_audio_path else None
+        self.jar_meta_path = Path(jar_meta_path) if jar_meta_path else None
+        
+        # Validate that at least one server is specified
+        if not self.jar_audio_path and not self.jar_meta_path:
+            raise ValueError("Must specify at least one: --audio-jar or --metadata-jar")
 
         # Setup logging
         self.logger = logging.getLogger("sndsync")
@@ -69,9 +79,13 @@ class SndsyncClient:
         
         # Resources
         self.socket = None
+        self.metadata_socket = None
         self.pyaudio_instance = None
         self.audio_stream = None
-        self.server_process = None
+        self.audio_server_process = None
+        self.meta_server_process = None
+        self.metadata_running = threading.Event()
+        self.metadata_thread = None
         
         # Audio configuration (will be set from server header)
         self.sample_rate = None
@@ -82,14 +96,36 @@ class SndsyncClient:
         self.adb_cmd = ["adb"]
         if device_serial:
             self.adb_cmd.extend(["-s", device_serial])
-    
+
     def run(self):
         """Execute the complete streaming workflow."""
         self._check_adb()
         self._check_device()
-        self._setup_audio_server()
-        self._connect()
-        self._stream()
+        
+        has_audio = self.jar_audio_path is not None
+        has_metadata = self.jar_meta_path is not None
+        
+        if has_metadata:
+            self._setup_meta_server()
+            self.metadata_running.set()
+            self.metadata_thread = threading.Thread(
+                target=self.metadata_listener,
+                daemon=True,
+            )
+            self.metadata_thread.start()
+        
+        if has_audio:
+            self._setup_audio_server()
+            self._connect()
+            self._stream()
+        elif has_metadata:
+            # Only metadata server running - keep process alive
+            self.logger.info("Metadata server active. Press Ctrl+C to stop.")
+            try:
+                while self.running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                self.logger.info("Stopping...")
 
     def _check_adb(self):
         """Verify ADB is installed and accessible."""
@@ -117,11 +153,77 @@ class SndsyncClient:
         if self.device_serial:
             self.logger.info(f"Using device: {self.device_serial}")
 
+    def _setup_meta_server(self):
+        """Deploy and start the MetaServer on device."""
+        if not self.jar_meta_path.exists():
+            self.logger.error(f"MetaServer.jar not found at: {self.jar_meta_path}")
+            self.logger.error("Please compile the project first or specify correct path with --metadata-jar")
+            sys.exit(1)
+        
+        self.logger.info(f"Pushing {self.jar_meta_path} to device...")
+        result = subprocess.run(
+            self.adb_cmd + ["push", str(self.jar_meta_path), "/data/local/tmp/MetaServer.jar"],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode != 0:
+            self.logger.error("Failed to push JAR to device")
+            self.logger.error(result.stderr)
+            sys.exit(1)
+        
+        self.logger.info(f"Setting up port forwarding for port {self.meta_port}...")
+        result = subprocess.run(
+            self.adb_cmd + ["forward", f"tcp:{self.meta_port}", f"tcp:{self.meta_port}"],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode != 0:
+            self.logger.error("Failed to setup port forwarding")
+            self.logger.error(result.stderr)
+            sys.exit(1)
+        
+        self.logger.info("Starting MetaServer on device...")
+        # Start the server in background
+        self.meta_server_process = subprocess.Popen(
+            self.adb_cmd + ["shell", f"CLASSPATH=/data/local/tmp/MetaServer.jar app_process /data/local/tmp/ com.metaserver.MetaServer {self.meta_port}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        # Wait a moment for server to start
+        self.logger.debug("Waiting for server to start...")
+        time.sleep(2)
+        
+        # Check if server started successfully
+        if self.meta_server_process.poll() is not None:
+            stdout, stderr = self.meta_server_process.communicate()
+            self.logger.error("MetaServer failed to start")
+            if stdout:
+                self.logger.debug(f"Server STDOUT:\n{stdout}")
+            if stderr:
+                self.logger.error(f"Server STDERR:\n{stderr}")
+            
+            logcat_result = subprocess.run(
+                self.adb_cmd + [
+                    "logcat", "-d",          # -d = dump and exit
+                    "-s", "MetaServer:E",   # only MetaServer errors
+                    "-v", "brief"
+                ],
+                capture_output=True, text=True
+            )
+            if logcat_result.stdout.strip():
+                self.logger.error(f"MetaServer logcat errors:\n{logcat_result.stdout.strip()}")
+            
+            sys.exit(1)
+        
+        self.logger.debug("MetaServer appears to be running")
+
     def _setup_audio_server(self):
         """Deploy and start the AudioServer on device."""
         if not self.jar_audio_path.exists():
             self.logger.error(f"AudioServer.jar not found at: {self.jar_audio_path}")
-            self.logger.error("Please compile the project first or specify correct path with --jar")
+            self.logger.error("Please compile the project first or specify correct path with --audio-jar")
             sys.exit(1)
         
         self.logger.info(f"Pushing {self.jar_audio_path} to device...")
@@ -148,7 +250,7 @@ class SndsyncClient:
         
         self.logger.info("Starting AudioServer on device...")
         # Start the server in background
-        self.server_process = subprocess.Popen(
+        self.audio_server_process = subprocess.Popen(
             self.adb_cmd + [
                 "shell",
                 "CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ com.audioserver.AudioServer "
@@ -164,8 +266,8 @@ class SndsyncClient:
         time.sleep(2)
         
         # Check if server started successfully
-        if self.server_process.poll() is not None:
-            stdout, stderr = self.server_process.communicate()
+        if self.audio_server_process.poll() is not None:
+            stdout, stderr = self.audio_server_process.communicate()
             self.logger.error("AudioServer failed to start")
             if stdout:
                 self.logger.debug(f"Server STDOUT:\n{stdout}")
@@ -186,6 +288,58 @@ class SndsyncClient:
             sys.exit(1)
         
         self.logger.debug("AudioServer appears to be running")
+
+    def metadata_listener(self):
+        self.logger.info("Connecting to metadata stream...")
+        
+        self.metadata_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.metadata_socket.settimeout(10)  # 10 second timeout
+        
+        try:
+            self.logger.debug(f"Connecting to 127.0.0.1:{self.meta_port}")
+            self.metadata_socket.connect(("127.0.0.1", self.meta_port))
+            self.logger.info("Connected successfully")
+        except socket.timeout:
+            self.logger.error("Connection timed out - server may not be ready")
+            sys.exit(1)
+        except socket.error as e:
+            self.logger.error(f"Connection failed: {e}")
+            sys.exit(1)
+
+        bytes_received = ""
+        try:
+            while self.metadata_running.is_set():
+                data = self.metadata_socket.recv(4096).decode("utf-8")
+                if not data:
+                    self.logger.info("Connection closed by device")
+                    break
+
+                bytes_received += data
+                while "\n" in bytes_received:
+                    line, bytes_received = bytes_received.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        self.logger.debug(f"Bad JSON: {line!r}")
+                        continue
+
+                    print(f"Title: {event.get('title')}")
+                    print(f"Artist: {event.get('artist')}")
+                    print(f"Album: {event.get('album')}")
+                    print(f"Duration: {event.get('duration', 0)}")
+
+        except KeyboardInterrupt:
+            self.logger.info("Stopping...")
+        except socket.timeout:
+            self.logger.error("Socket timeout while waiting for data")
+        except socket.error as e:
+            self.logger.error(f"Socket error: {e}")
+        except Exception as e:
+            self.logger.error(f"Error during playback: {e}")
     
     def _connect(self):
         """Connect to the audio stream."""
@@ -285,18 +439,35 @@ class SndsyncClient:
         self.logger.info("Cleaning up resources...")
         
         self.running = False
+        self.metadata_running.clear()
         
-        if hasattr(self, 'server_process') and self.server_process:
+        if self.meta_server_process:
             try:
-                self.logger.debug("Terminating server process...")
-                self.server_process.terminate()
-                self.server_process.wait(timeout=5)
-                self.logger.debug("Server process terminated")
+                self.logger.debug("Terminating MetaServer process...")
+                self.meta_server_process.terminate()
+                self.meta_server_process.wait(timeout=5)
+                self.logger.debug("MetaServer process terminated")
             except subprocess.TimeoutExpired:
-                self.logger.debug("Server process didn't terminate, killing...")
+                self.logger.debug("MetaServer process didn't terminate, killing...")
                 try:
-                    self.server_process.kill()
-                    self.logger.debug("Server process killed")
+                    self.meta_server_process.kill()
+                    self.logger.debug("MetaServer process killed")
+                except:
+                    pass
+            except:
+                pass
+
+        if self.audio_server_process:
+            try:
+                self.logger.debug("Terminating AudioServer process...")
+                self.audio_server_process.terminate()
+                self.audio_server_process.wait(timeout=5)
+                self.logger.debug("AudioServer process terminated")
+            except subprocess.TimeoutExpired:
+                self.logger.debug("AudioServer process didn't terminate, killing...")
+                try:
+                    self.audio_server_process.kill()
+                    self.logger.debug("AudioServer process killed")
                 except:
                     pass
             except:
@@ -323,19 +494,42 @@ class SndsyncClient:
                 self.socket.close()
             except:
                 pass
+
+        if self.metadata_socket:
+            try:
+                self.logger.debug("Closing metadata socket...")
+                self.metadata_socket.close()
+            except:
+                pass
         
         # Clean up port forwarding
-        try:
-            self.logger.debug(f"Removing port forwarding for {self.audio_port}...")
-            self._run_adb_command(["forward", "--remove", f"tcp:{self.audio_port}"], check_returncode=False)
-        except:
-            pass
+        if self.jar_audio_path:
+            try:
+                self.logger.debug(f"Removing port forwarding for audio port {self.audio_port}...")
+                subprocess.run(
+                    self.adb_cmd + ["forward", "--remove", f"tcp:{self.audio_port}"],
+                    capture_output=True,
+                    timeout=5
+                )
+            except:
+                pass
+        
+        if self.jar_meta_path:
+            try:
+                self.logger.debug(f"Removing port forwarding for metadata port {self.meta_port}...")
+                subprocess.run(
+                    self.adb_cmd + ["forward", "--remove", f"tcp:{self.meta_port}"],
+                    capture_output=True,
+                    timeout=5
+                )
+            except:
+                pass
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Stream audio from Android device to desktop"
+        description="Stream audio and/or metadata from Android device to desktop"
     )
     parser.add_argument(
         "-s", "--serial",
@@ -345,11 +539,15 @@ def main():
         "-p", "--port",
         type=int,
         default=9999,
-        help="Local port for forwarding (default: 9999)"
+        help="Local port for audio forwarding (default: 9999)"
     )
     parser.add_argument(
-        "-j", "--jar",
-        help="Path to AudioServer.jar file (default: ./AudioServer.jar)"
+        "-a", "--audio-jar",
+        help="Path to AudioServer.jar file (optional, stream audio)"
+    )
+    parser.add_argument(
+        "-m", "--metadata-jar",
+        help="Path to MetaServer.jar file (optional, stream metadata)"
     )
     parser.add_argument(
         "-d", "--debug",
@@ -359,12 +557,18 @@ def main():
     
     args = parser.parse_args()
     
-    client = SndsyncClient(
-        port=args.port,
-        device_serial=args.serial,
-        jar_audio_path=args.jar,
-        debug=args.debug
-    )
+    try:
+        client = SndsyncClient(
+            port=args.port,
+            device_serial=args.serial,
+            jar_audio_path=args.audio_jar,
+            jar_meta_path=args.metadata_jar,
+            debug=args.debug
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        parser.print_help()
+        sys.exit(1)
     
     # Setup cleanup on exit
     def signal_handler(sig, frame):
