@@ -3,15 +3,18 @@ package com.metaserver;
 import java.lang.reflect.Field;
 
 import android.content.ComponentName;
+import android.graphics.Bitmap;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaController.PlaybackInfo;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Looper;
+import android.util.Base64;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.BufferedWriter;
 import java.io.OutputStreamWriter;
 import java.net.ServerSocket;
@@ -141,12 +144,17 @@ public class MetaServer {
                         String artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST);
                         String album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM);
                         long duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
+                        Bitmap artBitmap = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
+                        if (artBitmap == null) {
+                            artBitmap = metadata.getBitmap(MediaMetadata.METADATA_KEY_ART);
+                        }
+                        String artBase64 = bitmapToBase64(artBitmap);
 
                         metadataEvent.put("title", title);
                         metadataEvent.put("artist", artist);
                         metadataEvent.put("album", album);
                         metadataEvent.put("duration", duration);
-                        metadataEvent.put("art", metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART));
+                        metadataEvent.put("art", artBase64 == null ? JSONObject.NULL : artBase64);
 
                         // comparable version WITHOUT art
                         comparable.put("title", title);
@@ -201,6 +209,21 @@ public class MetaServer {
             }
         } catch (Exception e) {
             System.out.println("[MetaServer] Client ended: " + e.getMessage());
+        }
+    }
+
+    private static String bitmapToBase64(Bitmap bitmap) {
+        if (bitmap == null) {
+            return null;
+        }
+
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out);
+            byte[] bytes = out.toByteArray();
+            return Base64.encodeToString(bytes, Base64.NO_WRAP);
+        } catch (Exception e) {
+            return null;
         }
     }
 
