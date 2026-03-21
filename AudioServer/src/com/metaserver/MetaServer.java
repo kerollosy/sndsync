@@ -1,19 +1,22 @@
 package com.metaserver;
 
-import java.lang.reflect.Method;
 import java.lang.reflect.Field;
-import java.util.List;
+
+import android.content.ComponentName;
+import android.media.MediaMetadata;
+import android.media.session.MediaController;
+import android.media.session.MediaController.PlaybackInfo;
+import android.media.session.MediaSessionManager;
+import android.media.session.PlaybackState;
+import android.os.Looper;
+
+import org.json.JSONObject;
+
 import java.io.BufferedWriter;
 import java.io.OutputStreamWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
-import org.json.JSONObject;
-
-import android.content.ComponentName;
-import android.os.Looper;
-import android.media.session.MediaController;
-import android.media.session.MediaSessionManager;
-import android.media.MediaMetadata;
+import java.util.List;
 
 public class MetaServer {
     private static final String PACKAGE_NAME = "com.android.shell";
@@ -114,6 +117,43 @@ public class MetaServer {
                         metadataEvent.put("art", metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART));
                     }
                     sendEvent(writer, metadataEvent);
+
+                    PlaybackState playbackState = controller.getPlaybackState();
+                    JSONObject playbackEvent = new JSONObject();
+                    playbackEvent.put("event", "playback");
+                    if (playbackState == null) {
+                        playbackEvent.put("state", 0);
+                        playbackEvent.put("position", 0);
+                        playbackEvent.put("speed", 1.0);
+                    } else {
+                        int mappedState = 0;
+                        int state = playbackState.getState();
+                        if (state == PlaybackState.STATE_STOPPED) {
+                            mappedState = 2;
+                        } else if (state == PlaybackState.STATE_PAUSED) {
+                            mappedState = 3;
+                        } else if (state == PlaybackState.STATE_PLAYING) {
+                            mappedState = 4;
+                        } else if (state == PlaybackState.STATE_BUFFERING || state == PlaybackState.STATE_CONNECTING) {
+                            mappedState = 6;
+                        }
+                        playbackEvent.put("state", mappedState);
+                        playbackEvent.put("position", playbackState.getPosition());
+                        playbackEvent.put("speed", playbackState.getPlaybackSpeed());
+                    }
+                    sendEvent(writer, playbackEvent);
+
+                    PlaybackInfo playbackInfo = controller.getPlaybackInfo();
+                    JSONObject volumeEvent = new JSONObject();
+                    volumeEvent.put("event", "volume");
+                    if (playbackInfo == null) {
+                        volumeEvent.put("current", JSONObject.NULL);
+                        volumeEvent.put("max", JSONObject.NULL);
+                    } else {
+                        volumeEvent.put("current", playbackInfo.getCurrentVolume());
+                        volumeEvent.put("max", playbackInfo.getMaxVolume());
+                    }
+                    sendEvent(writer, volumeEvent);
                 }
 
                 Thread.sleep(500);
