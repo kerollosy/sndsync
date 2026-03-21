@@ -22,6 +22,14 @@ from smtc_bridge import SmtcBridge
 
 init(autoreset=True)
 
+KEYEVENT = {
+    "play": "126",
+    "pause": "127",
+    "next": "87",
+    "prev": "88",
+    "stop": "86",
+}
+
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter for colored log output."""
@@ -87,7 +95,7 @@ class SndsyncClient:
         self.meta_server_process = None
         self.metadata_running = threading.Event()
         self.metadata_thread = None
-        self.smtc = SmtcBridge(self.logger)
+        self.smtc = SmtcBridge(self.logger, self._send_media_key)
         
         # Audio configuration (will be set from server header)
         self.sample_rate = None
@@ -155,6 +163,23 @@ class SndsyncClient:
         
         if self.device_serial:
             self.logger.info(f"Using device: {self.device_serial}")
+
+    def _send_media_key(self, key: str) -> None:
+        code = KEYEVENT.get(key)
+        if not code:
+            self.logger.debug(f"Unknown media key: {key}")
+            return
+
+        try:
+            self.logger.debug(f"Sending keyevent {key} ({code})")
+            subprocess.run(
+                self.adb_cmd + ["shell", "input", "keyevent", code],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception as e:
+            self.logger.debug(f"Keyevent send failed: {e}")
 
     def _setup_meta_server(self):
         """Deploy and start the MetaServer on device."""
@@ -336,27 +361,6 @@ class SndsyncClient:
                         continue
 
                     self.smtc.update_from_event(event)
-
-                    event_type = event.get("event")
-
-                    if event_type == "session":
-                        print(f"Session package: {event.get('package')}")
-                    elif event_type == "metadata":
-                        print(f"Title: {event.get('title')}")
-                        print(f"Artist: {event.get('artist')}")
-                        print(f"Album: {event.get('album')}")
-                        print(f"Duration: {event.get('duration', 0)}")
-                        print(f"Art: {event.get('art')}")
-                    elif event_type == "playback":
-                        print(f"Playback state: {event.get('state')}")
-                        print(f"Position: {event.get('position', 0)}")
-                        print(f"Speed: {event.get('speed', 1.0)}")
-                    elif event_type == "volume":
-                        print(f"Volume: {event.get('current')}/{event.get('max')}")
-                    else:
-                        print(f"Unknown event: {event}")
-
-                    print("-" * 36)
 
         except KeyboardInterrupt:
             self.logger.info("Stopping...")
