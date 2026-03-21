@@ -73,11 +73,13 @@ public class MetaServer {
     }
 
     private static void testMediaSessionManager(MediaSessionManager mediaSessionManager) {
-        MediaController primarySession = getPrimarySession(mediaSessionManager);
-        if (primarySession != null) {
+        MediaController controller = getPrimarySession(mediaSessionManager);
+        String packageName = controller != null ? controller.getPackageName() : null;
+        System.out.println("[MetaServer] Primary session package: " + (packageName != null ? packageName : "null"));
+        if (controller != null) {
             try {
-                PlaybackInfo playbackInfo = primarySession.getPlaybackInfo();
-                MediaMetadata metadata = primarySession.getMetadata();
+                PlaybackInfo playbackInfo = controller.getPlaybackInfo();
+                MediaMetadata metadata = controller.getMetadata();
 
                 System.out.println("    Session :");
                 System.out.println("        PlaybackInfo: " + (playbackInfo != null ? playbackInfo.toString() : "null"));
