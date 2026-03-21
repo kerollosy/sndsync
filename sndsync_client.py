@@ -293,7 +293,7 @@ class SndsyncClient:
         self.logger.info("Connecting to metadata stream...")
         
         self.metadata_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.metadata_socket.settimeout(10)  # 10 second timeout
+        self.metadata_socket.settimeout(2)
         
         try:
             self.logger.debug(f"Connecting to 127.0.0.1:{self.meta_port}")
@@ -301,15 +301,20 @@ class SndsyncClient:
             self.logger.info("Connected successfully")
         except socket.timeout:
             self.logger.error("Connection timed out - server may not be ready")
-            sys.exit(1)
+            return
         except socket.error as e:
             self.logger.error(f"Connection failed: {e}")
-            sys.exit(1)
+            return
 
         bytes_received = ""
         try:
             while self.metadata_running.is_set():
-                data = self.metadata_socket.recv(4096).decode("utf-8")
+                try:
+                    data = self.metadata_socket.recv(4096).decode("utf-8")
+                except socket.timeout:
+                    # Expected when metadata is unchanged.
+                    continue
+
                 if not data:
                     self.logger.info("Connection closed by device")
                     break
@@ -350,8 +355,6 @@ class SndsyncClient:
 
         except KeyboardInterrupt:
             self.logger.info("Stopping...")
-        except socket.timeout:
-            self.logger.error("Socket timeout while waiting for data")
         except socket.error as e:
             self.logger.error(f"Socket error: {e}")
         except Exception as e:
