@@ -15,7 +15,7 @@ if not exist ".\lib" mkdir ".\lib"
 
 echo [*] Compiling Java...
 REM Compiling with packages: the input paths must reflect the package structure
-javac -cp "%ANDROID_JAR%" ".\src\com\audioserver\MetaServer.java" ".\src\com\audioserver\FakeContext.java" ".\src\android\content\IContentProvider.java" ".\src\android\app\ActivityThread.java" ".\src\com\audioserver\ActivityManager.java" ".\src\com\audioserver\Workarounds.java" -d ".\bin"
+javac -cp "%ANDROID_JAR%" ".\src\com\metaserver\MetaServer.java" ".\src\com\metaserver\FakeContext.java" ".\src\android\content\IContentProvider.java" ".\src\android\app\ActivityThread.java" ".\src\com\metaserver\ActivityManager.java" ".\src\com\metaserver\Workarounds.java" -d ".\bin"
 if errorlevel 1 (
 echo [ERROR] Compilation failed
 pause
@@ -79,6 +79,6 @@ exit /b 1
 
 echo [*] Starting MetaServer in new window...
 REM Using the fully-qualified class name (FQN)
-adb shell "CLASSPATH=/data/local/tmp/MetaServer.jar app_process /data/local/tmp/ com.audioserver.MetaServer %AUDIO_PORT%"
+adb shell "CLASSPATH=/data/local/tmp/MetaServer.jar app_process /data/local/tmp/ com.metaserver.MetaServer %AUDIO_PORT%"
 
 endlocal

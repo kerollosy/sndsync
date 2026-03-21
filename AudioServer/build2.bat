@@ -6,7 +6,7 @@ setlocal enabledelayedexpansion
 set "ANDROID_SDK=%LOCALAPPDATA%\Android\Sdk"
 set "ANDROID_JAR=%ANDROID_SDK%\platforms\android-34\android.jar"
 set "D8_TOOL=%ANDROID_SDK%\build-tools\35.0.0\d8.bat"
-set JAR_PATH=./lib/AudioServer.jar
+set JAR_PATH=./lib/MetaServer.jar
 set AUDIO_PORT=42222
 
 REM Ensure output dirs exist
@@ -15,7 +15,7 @@ if not exist ".\lib" mkdir ".\lib"
 
 echo [*] Compiling Java...
 REM Compiling with packages: the input paths must reflect the package structure
-javac -cp "%ANDROID_JAR%" ".\src\com\audioserver\AudioServer.java" ".\src\com\audioserver\FakeContext.java" ".\src\android\content\IContentProvider.java" ".\src\com\audioserver\ActivityManager.java" ".\src\com\audioserver\Workarounds.java" -d ".\bin"
+javac -cp "%ANDROID_JAR%" ".\src\com\metaserver\MetaServer.java" ".\src\com\metaserver\FakeContext.java" ".\src\android\content\IContentProvider.java" ".\src\android\app\ActivityThread.java" ".\src\com\metaserver\ActivityManager.java" ".\src\com\metaserver\Workarounds.java" -d ".\bin"
 if errorlevel 1 (
 echo [ERROR] Compilation failed
 pause
@@ -53,10 +53,10 @@ exit /b 1
 echo [OK] DEX conversion successful
 
 echo [*] Creating JAR...
-if exist ".\lib\AudioServer.jar" del ".\lib\AudioServer.jar"
+if exist ".\lib\MetaServer.jar" del ".\lib\MetaServer.jar"
 
 REM Create the JAR containing ONLY the classes.dex file at the top level
-jar cvf ".\lib\AudioServer.jar" -C ".\bin" "classes.dex"
+jar cvf ".\lib\MetaServer.jar" -C ".\bin" "classes.dex"
 if errorlevel 1 (
 echo [ERROR] JAR creation failed
 pause
@@ -66,11 +66,11 @@ echo [OK] JAR created
 
 echo.
 echo [SUCCESS] Build complete!
-echo [*] JAR location: %cd%\lib\AudioServer.jar
+echo [*] JAR location: %cd%\lib\MetaServer.jar
 echo.
 
-echo [*] Pushing AudioServer.jar to device...
-adb push %JAR_PATH% /data/local/tmp/AudioServer.jar
+echo [*] Pushing MetaServer.jar to device...
+adb push %JAR_PATH% /data/local/tmp/MetaServer.jar
 if errorlevel 1 (
 echo [ERROR] Failed to push JAR
 pause
@@ -79,6 +79,6 @@ exit /b 1
 
 echo [*] Starting AudioServer in new window...
 REM Using the fully-qualified class name (FQN)
-adb shell "CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ com.audioserver.AudioServer %AUDIO_PORT%"
+adb shell "CLASSPATH=/data/local/tmp/MetaServer.jar app_process /data/local/tmp/ com.metaserver.MetaServer %AUDIO_PORT%"
 
 endlocal
