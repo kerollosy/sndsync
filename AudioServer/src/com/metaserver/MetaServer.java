@@ -14,9 +14,6 @@ import android.media.MediaMetadata;
 public class MetaServer {
     private static final String PACKAGE_NAME = "com.android.shell";
 
-    private static Object activityThread;
-    private static Class<?> activityThreadClass;
-
     private static FakeContext context;
 
     public static void main(String[] args) throws Exception {
