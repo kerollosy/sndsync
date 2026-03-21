@@ -77,7 +77,7 @@ public class MetaServer {
     private static void testMediaSessionManager(MediaSessionManager mediaSessionManager) {
         MediaController primarySession = getPrimarySession(mediaSessionManager);
         if (primarySession != null) {
-            testMediaSession(primarySession, 0);
+            testMediaSession(primarySession);
         } else {
             System.out.println("    No active sessions found.");
         }
@@ -99,49 +99,19 @@ public class MetaServer {
         }
     }
 
-    private static void testMediaSession(MediaController session, int index) {
+    private static void testMediaSession(MediaController session) {
         try {
-            // Get session info
-            String packageName = session.getPackageName();
-            System.out.println("    Session " + index + ": " + packageName);
-            
-            // Try to get playback info
-            try {
-                PlaybackInfo playbackInfo = session.getPlaybackInfo();
-                
-                if (playbackInfo != null) {
-                    int playbackType = playbackInfo.getPlaybackType();
-                    System.out.println("      → Playback type: " + (playbackType == 1 ? "Local" : "Remote"));
-                    
-                    int currentVolume = playbackInfo.getCurrentVolume();
-                    int maxVolume = playbackInfo.getMaxVolume();
-                    System.out.println("      → Volume: " + currentVolume + "/" + maxVolume);
-                }
-            } catch (Exception e) {
-                System.out.println("      → Playback info unavailable: " + e.getMessage());
-            }
-            
-            // Try to get metadata
-            try {
-                MediaMetadata metadata = session.getMetadata();
-                
-                if (metadata != null) {
-                    String title = metadata.getString("android.media.metadata.TITLE");
-                    String artist = metadata.getString("android.media.metadata.ARTIST");
-                    
-                    if (title != null || artist != null) {
-                        System.out.println("      → Now playing: " + 
-                            (title != null ? title : "Unknown") + 
-                            (artist != null ? " by " + artist : ""));
-                    }
-                }
-            } catch (Exception e) {
-                // Metadata might not be available or accessible
-                System.out.println("      → Metadata unavailable");
-            }
-            
+            PlaybackInfo playbackInfo = session.getPlaybackInfo();
+            MediaMetadata metadata = session.getMetadata();
+
+            System.out.println("    Session :");
+            System.out.println("        PlaybackInfo: " + (playbackInfo != null ? playbackInfo.toString() : "null"));
+            System.out.println("        Metadata: " + (metadata != null ? metadata.toString() : "null"));
+            System.out.println("            Title: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_TITLE) : "null"));
+            System.out.println("            Artist: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) : "null"));
+            System.out.println("            Album: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_ALBUM) : "null"));
         } catch (Exception e) {
-            System.out.println("    Session " + index + " test failed: " + e.getMessage());
+            System.out.println("    Session test failed: " + e.getMessage());
         }
     }
 }
