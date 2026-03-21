@@ -40,21 +40,21 @@ class SndsyncClient:
     """Android audio streaming client using ADB and socket communication."""
     
     def __init__(self, port: int = 9999, device_serial: Optional[str] = None, 
-                jar_path: Optional[str] = None, debug: bool = False):
+                jar_audio_path: Optional[str] = None, debug: bool = False):
         """
         Initialize the sndsync client.
         
         Args:
             port: Local port for audio forwarding
             device_serial: Optional device serial for multiple devices
-            jar_path: Path to AudioServer.jar file
+            jar_audio_path: Path to AudioServer.jar file (for audio data)
             debug: Enable debug logging
         """
         self.running = True
-        self.port = port
+        self.audio_port = port
         self.device_serial = device_serial
-        self.jar_path = Path(jar_path) if jar_path else Path("AudioServer.jar")
-        
+        self.jar_audio_path = Path(jar_audio_path) if jar_audio_path else Path("AudioServer.jar")
+
         # Setup logging
         self.logger = logging.getLogger("sndsync")
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
@@ -119,14 +119,14 @@ class SndsyncClient:
 
     def _setup_audio_server(self):
         """Deploy and start the AudioServer on device."""
-        if not self.jar_path.exists():
-            self.logger.error(f"AudioServer.jar not found at: {self.jar_path}")
+        if not self.jar_audio_path.exists():
+            self.logger.error(f"AudioServer.jar not found at: {self.jar_audio_path}")
             self.logger.error("Please compile the project first or specify correct path with --jar")
             sys.exit(1)
         
-        self.logger.info(f"Pushing {self.jar_path} to device...")
+        self.logger.info(f"Pushing {self.jar_audio_path} to device...")
         result = subprocess.run(
-            self.adb_cmd + ["push", str(self.jar_path), "/data/local/tmp/AudioServer.jar"],
+            self.adb_cmd + ["push", str(self.jar_audio_path), "/data/local/tmp/AudioServer.jar"],
             capture_output=True, text=True
         )
         
@@ -135,9 +135,9 @@ class SndsyncClient:
             self.logger.error(result.stderr)
             sys.exit(1)
         
-        self.logger.info(f"Setting up port forwarding for port {self.port}...")
+        self.logger.info(f"Setting up port forwarding for port {self.audio_port}...")
         result = subprocess.run(
-            self.adb_cmd + ["forward", f"tcp:{self.port}", f"tcp:{self.port}"],
+            self.adb_cmd + ["forward", f"tcp:{self.audio_port}", f"tcp:{self.audio_port}"],
             capture_output=True, text=True
         )
         
@@ -152,7 +152,7 @@ class SndsyncClient:
             self.adb_cmd + [
                 "shell",
                 "CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ com.audioserver.AudioServer "
-                f"{self.port}"
+                f"{self.audio_port}"
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -195,8 +195,8 @@ class SndsyncClient:
         self.socket.settimeout(10)  # 10 second timeout
         
         try:
-            self.logger.debug(f"Connecting to 127.0.0.1:{self.port}")
-            self.socket.connect(("127.0.0.1", self.port))
+            self.logger.debug(f"Connecting to 127.0.0.1:{self.audio_port}")
+            self.socket.connect(("127.0.0.1", self.audio_port))
             self.logger.info("Connected successfully")
             
             # Read audio header from server
@@ -326,8 +326,8 @@ class SndsyncClient:
         
         # Clean up port forwarding
         try:
-            self.logger.debug(f"Removing port forwarding for {self.port}...")
-            self._run_adb_command(["forward", "--remove", f"tcp:{self.port}"], check_returncode=False)
+            self.logger.debug(f"Removing port forwarding for {self.audio_port}...")
+            self._run_adb_command(["forward", "--remove", f"tcp:{self.audio_port}"], check_returncode=False)
         except:
             pass
 
@@ -362,7 +362,7 @@ def main():
     client = SndsyncClient(
         port=args.port,
         device_serial=args.serial,
-        jar_path=args.jar,
+        jar_audio_path=args.jar,
         debug=args.debug
     )
     
