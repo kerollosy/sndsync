@@ -18,6 +18,7 @@ from typing import Optional
 
 import pyaudio
 from colorama import init, Fore, Style
+from smtc_bridge import SmtcBridge
 
 init(autoreset=True)
 
@@ -86,6 +87,7 @@ class SndsyncClient:
         self.meta_server_process = None
         self.metadata_running = threading.Event()
         self.metadata_thread = None
+        self.smtc = SmtcBridge(self.logger)
         
         # Audio configuration (will be set from server header)
         self.sample_rate = None
@@ -107,6 +109,7 @@ class SndsyncClient:
         
         if has_metadata:
             self._setup_meta_server()
+            self.smtc.initialize()
             self.metadata_running.set()
             self.metadata_thread = threading.Thread(
                 target=self.metadata_listener,
@@ -332,6 +335,8 @@ class SndsyncClient:
                         self.logger.debug(f"Bad JSON: {line!r}")
                         continue
 
+                    self.smtc.update_from_event(event)
+
                     event_type = event.get("event")
 
                     if event_type == "session":
@@ -543,6 +548,8 @@ class SndsyncClient:
                 )
             except:
                 pass
+
+        self.smtc.clear()
 
 
 def main():
