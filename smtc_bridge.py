@@ -155,29 +155,19 @@ class SmtcBridge:
 
     def _map_button(self, button: Any) -> Optional[str]:
         name = button
-        match name:
-            case SystemMediaTransportControlsButton.PLAY:
-                return "play"
-            case SystemMediaTransportControlsButton.PAUSE:
-                return "pause"
-            case SystemMediaTransportControlsButton.STOP:
-                return "stop"
-            case SystemMediaTransportControlsButton.RECORD:
-                return "record"
-            case SystemMediaTransportControlsButton.FAST_FORWARD:
-                return "ffwd"
-            case SystemMediaTransportControlsButton.REWIND:
-                return "rewind"
-            case SystemMediaTransportControlsButton.NEXT:
-                return "next"
-            case SystemMediaTransportControlsButton.PREVIOUS:
-                return "prev"
-            case SystemMediaTransportControlsButton.CHANNEL_UP:
-                return "ch_up"
-            case SystemMediaTransportControlsButton.CHANNEL_DOWN:
-                return "ch_down"
-            case _:
-                return None
+        button_map = {
+            SystemMediaTransportControlsButton.PLAY: "play",
+            SystemMediaTransportControlsButton.PAUSE: "pause",
+            SystemMediaTransportControlsButton.STOP: "stop",
+            SystemMediaTransportControlsButton.RECORD: "record",
+            SystemMediaTransportControlsButton.FAST_FORWARD: "ffwd",
+            SystemMediaTransportControlsButton.REWIND: "rewind",
+            SystemMediaTransportControlsButton.NEXT: "next",
+            SystemMediaTransportControlsButton.PREVIOUS: "prev",
+            SystemMediaTransportControlsButton.CHANNEL_UP: "ch_up",
+            SystemMediaTransportControlsButton.CHANNEL_DOWN: "ch_down",
+        }
+        return button_map.get(name)
 
 
 
