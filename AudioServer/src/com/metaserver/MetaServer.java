@@ -95,6 +95,9 @@ public class MetaServer {
 
     private static void handleClient(Socket client) {
         String lastPackage = null;
+        String lastMetadataJson = null;
+        String lastPlaybackJson = null;
+        String lastVolumeJson = null;
 
         try (Socket socket = client;
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()))) {
@@ -135,32 +138,29 @@ public class MetaServer {
                         metadataEvent.put("duration", metadata.getLong(MediaMetadata.METADATA_KEY_DURATION));
                         metadataEvent.put("art", metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART));
                     }
-                    sendEvent(writer, metadataEvent);
+                    String metadataJson = metadataEvent.toString();
+                    if (!metadataJson.equals(lastMetadataJson)) {
+                        sendEvent(writer, metadataEvent);
+                        lastMetadataJson = metadataJson;
+                    }
 
                     PlaybackState playbackState = controller.getPlaybackState();
                     JSONObject playbackEvent = new JSONObject();
                     playbackEvent.put("event", "playback");
                     if (playbackState == null) {
-                        playbackEvent.put("state", 0);
+                        playbackEvent.put("state", "None");
                         playbackEvent.put("position", 0);
                         playbackEvent.put("speed", 1.0);
                     } else {
-                        int mappedState = 0;
-                        int state = playbackState.getState();
-                        if (state == PlaybackState.STATE_STOPPED) {
-                            mappedState = 2;
-                        } else if (state == PlaybackState.STATE_PAUSED) {
-                            mappedState = 3;
-                        } else if (state == PlaybackState.STATE_PLAYING) {
-                            mappedState = 4;
-                        } else if (state == PlaybackState.STATE_BUFFERING || state == PlaybackState.STATE_CONNECTING) {
-                            mappedState = 6;
-                        }
-                        playbackEvent.put("state", mappedState);
+                        playbackEvent.put("state", mapPlaybackLabel(playbackState.getState()));
                         playbackEvent.put("position", playbackState.getPosition());
                         playbackEvent.put("speed", playbackState.getPlaybackSpeed());
                     }
-                    sendEvent(writer, playbackEvent);
+                    String playbackJson = playbackEvent.toString();
+                    if (!playbackJson.equals(lastPlaybackJson)) {
+                        sendEvent(writer, playbackEvent);
+                        lastPlaybackJson = playbackJson;
+                    }
 
                     PlaybackInfo playbackInfo = controller.getPlaybackInfo();
                     JSONObject volumeEvent = new JSONObject();
@@ -172,7 +172,11 @@ public class MetaServer {
                         volumeEvent.put("current", playbackInfo.getCurrentVolume());
                         volumeEvent.put("max", playbackInfo.getMaxVolume());
                     }
-                    sendEvent(writer, volumeEvent);
+                    String volumeJson = volumeEvent.toString();
+                    if (!volumeJson.equals(lastVolumeJson)) {
+                        sendEvent(writer, volumeEvent);
+                        lastVolumeJson = volumeJson;
+                    }
                 }
 
                 Thread.sleep(POLL_MS);
@@ -180,6 +184,22 @@ public class MetaServer {
         } catch (Exception e) {
             System.out.println("[MetaServer] Client ended: " + e.getMessage());
         }
+    }
+
+    private static String mapPlaybackLabel(int state) {
+        if (state == PlaybackState.STATE_STOPPED) {
+            return "Stopped";
+        }
+        if (state == PlaybackState.STATE_PAUSED) {
+            return "Paused";
+        }
+        if (state == PlaybackState.STATE_PLAYING) {
+            return "Playing";
+        }
+        if (state == PlaybackState.STATE_BUFFERING || state == PlaybackState.STATE_CONNECTING) {
+            return "Buffering";
+        }
+        return "None";
     }
 
     private static MediaController getPrimarySession() {
