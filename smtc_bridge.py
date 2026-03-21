@@ -1,3 +1,4 @@
+import base64
 from datetime import timedelta
 from typing import Any, Optional
 
@@ -8,6 +9,11 @@ try:
         SystemMediaTransportControlsTimelineProperties,
     )
     from winrt.windows.media.playback import BackgroundMediaPlayer
+    from winrt.windows.storage.streams import (
+        DataWriter,
+        InMemoryRandomAccessStream,
+        RandomAccessStreamReference,
+    )
 
     _WINRT_AVAILABLE = True
 except Exception:
@@ -59,6 +65,7 @@ class SmtcBridge:
                 title = event.get("title") or ""
                 artist = event.get("artist") or ""
                 album = event.get("album") or ""
+                art_b64 = event.get("art")
                 self.duration_ms = int(event.get("duration", 0) or 0)
 
                 self.updater.type = MediaPlaybackType.MUSIC
@@ -66,6 +73,8 @@ class SmtcBridge:
                     self.updater.music_properties.title = title
                     self.updater.music_properties.artist = artist
                     self.updater.music_properties.album_title = album
+
+                self._set_thumbnail_from_base64(art_b64)
                 self.updater.update()
 
                 self._update_timeline(position_ms=0)
@@ -107,6 +116,22 @@ class SmtcBridge:
             self.smtc.update_timeline_properties(tl)
         except Exception as e:
             self.logger.debug(f"SMTC timeline update failed: {e}")
+
+    def _set_thumbnail_from_base64(self, art_b64: Optional[str]) -> None:
+        if not art_b64:
+            return
+
+        try:
+            img_bytes = base64.b64decode(art_b64)
+            stream = InMemoryRandomAccessStream()
+            writer = DataWriter(stream)
+            writer.write_bytes(img_bytes)
+            writer.store_async().get()
+            writer.detach_stream()
+            stream.seek(0)
+            self.updater.thumbnail = RandomAccessStreamReference.create_from_stream(stream)
+        except Exception as e:
+            self.logger.debug(f"SMTC art decode failed: {e}")
 
     def clear(self) -> None:
         if not self.enabled or not self.smtc or not self.updater:
