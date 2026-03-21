@@ -327,6 +327,9 @@ class SndsyncClient:
                         self.logger.debug(f"Bad JSON: {line!r}")
                         continue
 
+                    if event.get("event") != "metadata":
+                        continue
+
                     print(f"Title: {event.get('title')}")
                     print(f"Artist: {event.get('artist')}")
                     print(f"Album: {event.get('album')}")
