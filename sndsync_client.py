@@ -327,13 +327,26 @@ class SndsyncClient:
                         self.logger.debug(f"Bad JSON: {line!r}")
                         continue
 
-                    if event.get("event") != "metadata":
-                        continue
+                    event_type = event.get("event")
 
-                    print(f"Title: {event.get('title')}")
-                    print(f"Artist: {event.get('artist')}")
-                    print(f"Album: {event.get('album')}")
-                    print(f"Duration: {event.get('duration', 0)}")
+                    if event_type == "session":
+                        print(f"Session package: {event.get('package')}")
+                    elif event_type == "metadata":
+                        print(f"Title: {event.get('title')}")
+                        print(f"Artist: {event.get('artist')}")
+                        print(f"Album: {event.get('album')}")
+                        print(f"Duration: {event.get('duration', 0)}")
+                        print(f"Art: {event.get('art')}")
+                    elif event_type == "playback":
+                        print(f"Playback state: {event.get('state')}")
+                        print(f"Position: {event.get('position', 0)}")
+                        print(f"Speed: {event.get('speed', 1.0)}")
+                    elif event_type == "volume":
+                        print(f"Volume: {event.get('current')}/{event.get('max')}")
+                    else:
+                        print(f"Unknown event: {event}")
+
+                    print("-" * 36)
 
         except KeyboardInterrupt:
             self.logger.info("Stopping...")
