@@ -93,11 +93,29 @@ public class MetaServer {
     }
 
     private static void handleClient(Socket client) {
+        String lastPackage = null;
+
         try (Socket socket = client;
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()))) {
 
             while (socket.isConnected()) {
                 MediaController controller = getPrimarySession();
+                String packageName = controller != null ? controller.getPackageName() : null;
+
+                boolean packageChanged;
+                if (lastPackage == null) {
+                    packageChanged = packageName != null;
+                } else {
+                    packageChanged = !lastPackage.equals(packageName);
+                }
+
+                if (packageChanged) {
+                    JSONObject sessionEvent = new JSONObject();
+                    sessionEvent.put("event", "session");
+                    sessionEvent.put("package", packageName == null ? JSONObject.NULL : packageName);
+                    sendEvent(writer, sessionEvent);
+                    lastPackage = packageName;
+                }
 
                 if (controller != null) {
                     MediaMetadata metadata = controller.getMetadata();
