@@ -21,6 +21,7 @@ import java.util.List;
 public class MetaServer {
     private static final String PACKAGE_NAME = "com.android.shell";
     private static final int DEFAULT_PORT = 9998;
+    private static final int POLL_MS = 500;
 
     private static FakeContext context;
     private static MediaSessionManager mediaSessionManager;
@@ -174,7 +175,7 @@ public class MetaServer {
                     sendEvent(writer, volumeEvent);
                 }
 
-                Thread.sleep(500);
+                Thread.sleep(POLL_MS);
             }
         } catch (Exception e) {
             System.out.println("[MetaServer] Client ended: " + e.getMessage());
