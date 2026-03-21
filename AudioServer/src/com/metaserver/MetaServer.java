@@ -124,24 +124,42 @@ public class MetaServer {
                 if (controller != null) {
                     MediaMetadata metadata = controller.getMetadata();
                     JSONObject metadataEvent = new JSONObject();
+                    JSONObject comparable = new JSONObject();
+
                     metadataEvent.put("event", "metadata");
+
                     if (metadata == null) {
                         metadataEvent.put("title", JSONObject.NULL);
                         metadataEvent.put("artist", JSONObject.NULL);
                         metadataEvent.put("album", JSONObject.NULL);
                         metadataEvent.put("duration", 0);
                         metadataEvent.put("art", JSONObject.NULL);
+
+                        comparable = metadataEvent;
                     } else {
-                        metadataEvent.put("title", metadata.getString(MediaMetadata.METADATA_KEY_TITLE));
-                        metadataEvent.put("artist", metadata.getString(MediaMetadata.METADATA_KEY_ARTIST));
-                        metadataEvent.put("album", metadata.getString(MediaMetadata.METADATA_KEY_ALBUM));
-                        metadataEvent.put("duration", metadata.getLong(MediaMetadata.METADATA_KEY_DURATION));
+                        String title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE);
+                        String artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST);
+                        String album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM);
+                        long duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
+
+                        metadataEvent.put("title", title);
+                        metadataEvent.put("artist", artist);
+                        metadataEvent.put("album", album);
+                        metadataEvent.put("duration", duration);
                         metadataEvent.put("art", metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART));
+
+                        // comparable version WITHOUT art
+                        comparable.put("title", title);
+                        comparable.put("artist", artist);
+                        comparable.put("album", album);
+                        comparable.put("duration", duration);
                     }
-                    String metadataJson = metadataEvent.toString();
-                    if (!metadataJson.equals(lastMetadataJson)) {
+
+                    String comparableJson = comparable.toString();
+
+                    if (!comparableJson.equals(lastMetadataJson)) {
                         sendEvent(writer, metadataEvent);
-                        lastMetadataJson = metadataJson;
+                        lastMetadataJson = comparableJson;
                     }
 
                     PlaybackState playbackState = controller.getPlaybackState();
