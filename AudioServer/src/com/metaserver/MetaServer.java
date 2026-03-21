@@ -63,21 +63,31 @@ public class MetaServer {
             context = FakeContext.get();
         }
 
-        MediaSessionManager service = (MediaSessionManager) context.getSystemService("media_session");
-        if (service != null) {
-            System.out.println("✓ Available (" + service.getClass().getSimpleName() + ")");
-
-            testMediaSessionManager(service);
-        } else {
-            System.out.println("✗ Not available");
+        Object service = context.getSystemService("media_session");
+        if (!(service instanceof MediaSessionManager)) {
+            throw new RuntimeException("media_session service unavailable");
         }
-
+        MediaSessionManager mediaSessionManager = (MediaSessionManager) service;
+        System.out.println("[MetaServer] MediaSessionManager ready");
+        testMediaSessionManager(mediaSessionManager);
     }
 
     private static void testMediaSessionManager(MediaSessionManager mediaSessionManager) {
         MediaController primarySession = getPrimarySession(mediaSessionManager);
         if (primarySession != null) {
-            testMediaSession(primarySession);
+            try {
+                PlaybackInfo playbackInfo = primarySession.getPlaybackInfo();
+                MediaMetadata metadata = primarySession.getMetadata();
+
+                System.out.println("    Session :");
+                System.out.println("        PlaybackInfo: " + (playbackInfo != null ? playbackInfo.toString() : "null"));
+                System.out.println("        Metadata: " + (metadata != null ? metadata.toString() : "null"));
+                System.out.println("            Title: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_TITLE) : "null"));
+                System.out.println("            Artist: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) : "null"));
+                System.out.println("            Album: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_ALBUM) : "null"));
+            } catch (Exception e) {
+                System.out.println("    Session test failed: " + e.getMessage());
+            }
         } else {
             System.out.println("    No active sessions found.");
         }
@@ -96,22 +106,6 @@ public class MetaServer {
             return sessions.get(0);
         } catch (Throwable t) {
             return null;
-        }
-    }
-
-    private static void testMediaSession(MediaController session) {
-        try {
-            PlaybackInfo playbackInfo = session.getPlaybackInfo();
-            MediaMetadata metadata = session.getMetadata();
-
-            System.out.println("    Session :");
-            System.out.println("        PlaybackInfo: " + (playbackInfo != null ? playbackInfo.toString() : "null"));
-            System.out.println("        Metadata: " + (metadata != null ? metadata.toString() : "null"));
-            System.out.println("            Title: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_TITLE) : "null"));
-            System.out.println("            Artist: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) : "null"));
-            System.out.println("            Album: " + (metadata != null ? metadata.getString(MediaMetadata.METADATA_KEY_ALBUM) : "null"));
-        } catch (Exception e) {
-            System.out.println("    Session test failed: " + e.getMessage());
         }
     }
 }
