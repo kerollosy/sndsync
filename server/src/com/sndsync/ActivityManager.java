@@ -1,4 +1,4 @@
-package com.metaserver;
+package com.sndsync;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;

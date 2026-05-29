@@ -1,4 +1,4 @@
-package com.metaserver;
+package com.sndsync;
 
 import android.util.Log;
 import android.content.ComponentName;

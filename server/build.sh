@@ -45,10 +45,10 @@ mkdir -p bin/audio bin/meta dist
 
 # 3. Compile and DEX AudioServer
 echo "[+] Compiling AudioServer..."
-javac --release 17 -cp "$ANDROID_JAR" src/com/audioserver/AudioServer.java -d bin/audio
+javac --release 17 -cp "$ANDROID_JAR" src/com/sndsync/AudioServer.java -d bin/audio
 
 echo "[+] Converting AudioServer to DEX..."
-"$D8" bin/audio/com/audioserver/AudioServer.class --output bin/audio
+"$D8" bin/audio/com/sndsync/AudioServer.class --output bin/audio
 
 echo "[+] Packaging AudioServer.jar -> dist/AudioServer.jar..."
 jar cf dist/AudioServer.jar -C bin/audio classes.dex
@@ -57,10 +57,10 @@ jar cf dist/AudioServer.jar -C bin/audio classes.dex
 # 4. Compile and DEX MetaServer
 echo "[+] Compiling MetaServer components..."
 javac --release 17 -cp "$ANDROID_JAR" \
-    src/com/metaserver/MetaServer.java \
-    src/com/metaserver/FakeContext.java \
-    src/com/metaserver/ActivityManager.java \
-    src/com/metaserver/Workarounds.java \
+    src/com/sndsync/MetaServer.java \
+    src/com/sndsync/FakeContext.java \
+    src/com/sndsync/ActivityManager.java \
+    src/com/sndsync/Workarounds.java \
     src/android/content/IContentProvider.java \
     src/android/app/ActivityThread.java \
     -d bin/meta

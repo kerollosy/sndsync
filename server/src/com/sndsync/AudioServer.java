@@ -1,4 +1,4 @@
-package com.audioserver;
+package com.sndsync;
 
 import android.util.Log;
 import android.os.Build;

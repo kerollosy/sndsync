@@ -45,14 +45,14 @@ mkdir "dist"
 
 :: 3. Compile and DEX AudioServer
 echo [+] Compiling AudioServer...
-javac --release 17 -cp "%ANDROID_JAR%" "src\com\audioserver\AudioServer.java" -d "bin\audio"
+javac --release 17 -cp "%ANDROID_JAR%" "src\com\sndsync\AudioServer.java" -d "bin\audio"
 if errorlevel 1 (
     echo ERROR: Compilation of AudioServer failed.
     exit /b 1
 )
 
 echo [+] Converting AudioServer to DEX...
-call "%D8%" "bin\audio\com\audioserver\AudioServer.class" --output "bin\audio"
+call "%D8%" "bin\audio\com\sndsync\AudioServer.class" --output "bin\audio"
 if errorlevel 1 (
     echo ERROR: AudioServer DEX conversion failed.
     exit /b 1
@@ -69,10 +69,10 @@ if errorlevel 1 (
 :: 4. Compile and DEX MetaServer
 echo [+] Compiling MetaServer...
 javac --release 17 -cp "%ANDROID_JAR%" ^
-    "src\com\metaserver\MetaServer.java" ^
-    "src\com\metaserver\FakeContext.java" ^
-    "src\com\metaserver\ActivityManager.java" ^
-    "src\com\metaserver\Workarounds.java" ^
+    "src\com\sndsync\MetaServer.java" ^
+    "src\com\sndsync\FakeContext.java" ^
+    "src\com\sndsync\ActivityManager.java" ^
+    "src\com\sndsync\Workarounds.java" ^
     "src\android\content\IContentProvider.java" ^
     "src\android\app\ActivityThread.java" ^
     -d "bin\meta"
