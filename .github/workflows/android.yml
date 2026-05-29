@@ -26,23 +26,23 @@ jobs:
           build-tools-version: 35.0.0
 
       - name: Make scripts executable
-        run: chmod +x ./AudioServer/build.sh
+        run: chmod +x ./server/build.sh
 
       - name: Compile and Package Android Servers
         run: |
-          cd AudioServer
+          cd server
           ./build.sh
 
       - name: Upload Audio Server Artifact
         uses: actions/upload-artifact@v4
         with:
           name: audio-server-jar
-          path: AudioServer/dist/AudioServer.jar
+          path: server/dist/server.jar
           retention-days: 30
 
       - name: Upload Meta Server Artifact
         uses: actions/upload-artifact@v4
         with:
           name: meta-server-jar
-          path: AudioServer/dist/MetaServer.jar
+          path: server/dist/MetaServer.jar
           retention-days: 30
