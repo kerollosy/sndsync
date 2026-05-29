@@ -1,15 +1,20 @@
 @echo off
 setlocal enabledelayedexpansion
 
-echo Building AudioServer...
+:: Automatically switch working directory to the script's folder location
+cd /d "%~dp0"
 
-REM Check for Android SDK
+echo ==================================================
+echo    Building sndsync Android Servers (Win)
+echo ==================================================
+
+:: 1. Resolve Android SDK
 if not defined ANDROID_HOME (
     if exist "%LOCALAPPDATA%\Android\Sdk" (
         set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
     ) else (
-        echo ERROR: ANDROID_HOME not set and SDK not found in default location
-        echo Please set ANDROID_HOME environment variable
+        echo ERROR: ANDROID_HOME environment variable is not defined.
+        echo Please point it to your local Android Sdk location.
         exit /b 1
     )
 )
@@ -17,56 +22,90 @@ if not defined ANDROID_HOME (
 set "ANDROID_JAR=%ANDROID_HOME%\platforms\android-34\android.jar"
 set "D8=%ANDROID_HOME%\build-tools\35.0.0\d8.bat"
 
-REM Verify required files exist
+:: 2. Verify Files
 if not exist "%ANDROID_JAR%" (
-    echo ERROR: Android JAR not found at: %ANDROID_JAR%
-    echo Please install Android SDK API 34
+    echo ERROR: Platform JAR not found: %ANDROID_JAR%
+    echo Please install Android Sdk Platform API 34.
     exit /b 1
 )
 
 if not exist "%D8%" (
-    echo ERROR: d8 tool not found at: %D8%
-    echo Please install Android build-tools 35.0.0
+    echo ERROR: d8 build tool compiler not found: %D8%
+    echo Please install Android Sdk Build-tools 35.0.0.
     exit /b 1
 )
 
-if not exist "src\AudioServer.java" (
-    echo ERROR: Source file not found: src\AudioServer.java
-    exit /b 1
-)
+:: Clear previous builds 
+if exist "bin" rd /s /q "bin"
+if exist "dist" rd /s /q "dist"
 
-REM Create output directory
-if not exist "bin" mkdir "bin"
+mkdir "bin\audio"
+mkdir "bin\meta"
+mkdir "dist"
 
-REM Clean previous build
-if exist "bin\*.class" del /q "bin\*.class"
-if exist "bin\classes.dex" del /q "bin\classes.dex"
-if exist "AudioServer.jar" del /q "AudioServer.jar"
-
-echo Compiling Java...
-javac -cp "%ANDROID_JAR%" "src\AudioServer.java" -d "bin"
+:: 3. Compile and DEX AudioServer
+echo [+] Compiling AudioServer...
+javac --release 17 -cp "%ANDROID_JAR%" "src\com\audioserver\AudioServer.java" -d "bin\audio"
 if errorlevel 1 (
-    echo ERROR: Compilation failed
+    echo ERROR: Compilation of AudioServer failed.
     exit /b 1
 )
 
-echo Converting to DEX...
-call "%D8%" "bin\com\audioserver\AudioServer.class" --output "bin"
+echo [+] Converting AudioServer to DEX...
+call "%D8%" "bin\audio\com\audioserver\AudioServer.class" --output "bin\audio"
 if errorlevel 1 (
-    echo ERROR: DEX conversion failed
+    echo ERROR: AudioServer DEX conversion failed.
     exit /b 1
 )
 
-echo Creating JAR...
-jar cf "AudioServer.jar" -C "bin" "classes.dex"
+echo [+] Packaging AudioServer.jar -> dist\AudioServer.jar...
+jar cf dist\AudioServer.jar -C "bin\audio" classes.dex
 if errorlevel 1 (
-    echo ERROR: JAR creation failed
+    echo ERROR: AudioServer JAR packaging failed.
     exit /b 1
 )
 
-echo.
-echo Build successful!
-echo JAR created: %cd%\AudioServer.jar
-echo File size: 
-for %%A in ("AudioServer.jar") do echo   %%~zA bytes
-echo.
+
+:: 4. Compile and DEX MetaServer
+echo [+] Compiling MetaServer...
+javac --release 17 -cp "%ANDROID_JAR%" ^
+    "src\com\metaserver\MetaServer.java" ^
+    "src\com\metaserver\FakeContext.java" ^
+    "src\com\metaserver\ActivityManager.java" ^
+    "src\com\metaserver\Workarounds.java" ^
+    "src\android\content\IContentProvider.java" ^
+    "src\android\app\ActivityThread.java" ^
+    -d "bin\meta"
+if errorlevel 1 (
+    echo ERROR: Compilation of MetaServer failed.
+    exit /b 1
+)
+
+echo [+] Converting MetaServer to DEX...
+set "CLASS_FILES="
+for /R "bin\meta" %%f in (*.class) do (
+    set "CLASS_FILES=!CLASS_FILES! "%%f""
+)
+
+call "%D8%" %CLASS_FILES% --output "bin\meta" --lib "%ANDROID_JAR%"
+if errorlevel 1 (
+    echo ERROR: MetaServer DEX conversion failed.
+    exit /b 1
+)
+
+echo [+] Packaging MetaServer.jar -> dist\MetaServer.jar...
+jar cf "dist\MetaServer.jar" -C "bin\meta" classes.dex
+if errorlevel 1 (
+    echo ERROR: MetaServer JAR packaging failed.
+    exit /b 1
+)
+
+:: Clean temporary compilation class files
+rd /s /q "bin"
+
+echo ==================================================
+echo    Build successful!
+echo    - dist\AudioServer.jar
+echo    - dist\MetaServer.jar
+echo ==================================================
+endlocal

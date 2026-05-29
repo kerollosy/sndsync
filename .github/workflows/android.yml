@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "improvements" ]
   pull_request:
     branches: [ "master" ]
 
@@ -25,30 +25,24 @@ jobs:
           api-level: 34
           build-tools-version: 35.0.0
 
-      - name: Create output directories
-        run: |
-          mkdir -p ./bin
-          mkdir -p ./lib
+      - name: Make scripts executable
+        run: chmod +x ./AudioServer/build.sh
 
-      - name: Compile Java
+      - name: Compile and Package Android Servers
         run: |
-          javac -cp "$ANDROID_HOME/platforms/android-34/android.jar" \
-            ./src/AudioServer.java -d ./bin
+          cd AudioServer
+          ./build.sh
 
-      - name: Convert to DEX
-        run: |
-          rm -f ./bin/classes.dex
-          "$ANDROID_HOME/build-tools/35.0.0/d8" \
-            ./bin/AudioServer.class --output ./bin
-
-      - name: Create JAR
-        run: |
-          rm -f ./lib/AudioServer.jar
-          jar cvf ./lib/AudioServer.jar -C ./bin classes.dex
-
-      - name: Upload artifact
+      - name: Upload Audio Server Artifact
         uses: actions/upload-artifact@v4
         with:
           name: audio-server-jar
-          path: ./lib/AudioServer.jar
+          path: AudioServer/dist/AudioServer.jar
+          retention-days: 30
+
+      - name: Upload Meta Server Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meta-server-jar
+          path: AudioServer/dist/MetaServer.jar
           retention-days: 30
