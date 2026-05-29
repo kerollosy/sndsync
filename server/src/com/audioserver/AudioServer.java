@@ -2,27 +2,34 @@ package com.audioserver;
 
 import android.util.Log;
 import android.os.Build;
+import android.media.AudioRecord;
+import android.media.AudioFormat;
+import android.os.Looper;
 
+import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.reflect.Method;
+import java.lang.reflect.Field;
 import java.net.ServerSocket;
 import java.net.Socket;
 
 public class AudioServer {
-    private static final String TAG = "AudioServer";
+    private static final String TAG = "SndsyncAudioServer";
 
-    private static final int SAMPLE_RATE = 48000;
+    private static final int DEFAULT_PORT = 9999;
     private static final int REMOTE_SUBMIX = 8;
+    private static final int ENCODING = AudioFormat.ENCODING_PCM_16BIT;
+    private static int sampleRate = 48000;
+    private static int channelConfig = AudioFormat.CHANNEL_IN_MONO;
     
-    private static Object audioRecord;
-    private static volatile boolean isRunning = true;
+    private static AudioRecord recorder;
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) throws Exception {        
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.e(TAG, "AudioRecord with REMOTE_SUBMIX source requires Android 11 (API 30) or higher");
             throw new Exception("Unsupported Android version: " + Build.VERSION.SDK_INT);
         }
-        int port = 9999;
+
+        int port = DEFAULT_PORT;
         if (args.length > 0) {
             try {
                 port = Integer.parseInt(args[0]);
@@ -31,142 +38,153 @@ public class AudioServer {
             }
         }
 
-        Log.i(TAG, "[AudioServer] Starting audio server on port " + port);
-        
+        for (String arg : args) {
+            if (arg.equalsIgnoreCase("--stereo")) {
+                channelConfig = AudioFormat.CHANNEL_IN_STEREO;
+            } else if (arg.equalsIgnoreCase("--16000")) {
+                sampleRate = 16000;
+            } else if (arg.equalsIgnoreCase("--44100")) {
+                sampleRate = 44100;
+            }
+        }
+
+        Log.i(TAG, "Starting AudioServer on port: " + port);
+        Log.i(TAG, "Config: " + sampleRate + "Hz, " + 
+            (channelConfig == AudioFormat.CHANNEL_IN_STEREO ? "Stereo" : "Mono"));
+
         try {
-            initAudioRecord();
+            prepareMainLooper();
             startServer(port);
         } catch (Exception e) {
-            Log.e(TAG, "[AudioServer] FATAL ERROR: " + e.getMessage());
-            e.printStackTrace();
+            Log.e(TAG, "FATAL SERVER ERROR: " + e.getMessage());
+            releaseAudioRecord();
             System.exit(1);
         }
     }
 
-    private static void initAudioRecord() throws Exception {
-        try {
-            Class<?> audioFormatClass = Class.forName("android.media.AudioFormat");
-            Class<?> audioRecordClass = Class.forName("android.media.AudioRecord");
-            
-            // Get constants from AudioFormat
-            int CHANNEL_IN_MONO = audioFormatClass.getField("CHANNEL_IN_MONO").getInt(null);
-            int ENCODING_PCM_16BIT = audioFormatClass.getField("ENCODING_PCM_16BIT").getInt(null);
-            
-            Log.i(TAG, "[AudioServer] Audio config: rate=" + SAMPLE_RATE + 
-                            " channels=" + CHANNEL_IN_MONO + " encoding=" + ENCODING_PCM_16BIT);
-            
-            // Get minimum buffer size
-            Method getMinBufferSize = audioRecordClass.getMethod("getMinBufferSize", 
-                int.class, int.class, int.class);
-            int minBufferSize = (int) getMinBufferSize.invoke(null, SAMPLE_RATE, CHANNEL_IN_MONO, ENCODING_PCM_16BIT);
-            int bufferSize = minBufferSize * 2;
-            
-            Log.i(TAG, "[AudioServer] Min buffer size: " + minBufferSize + ", using: " + bufferSize);
-            
-            // Create AudioRecord with REMOTE_SUBMIX source
-            audioRecord = audioRecordClass.getConstructor(
-                int.class, int.class, int.class, int.class, int.class
-            ).newInstance(REMOTE_SUBMIX, SAMPLE_RATE, CHANNEL_IN_MONO, ENCODING_PCM_16BIT, bufferSize);
-            
-            // Check initialization state
-            Method getState = audioRecordClass.getMethod("getState");
-            int state = (int) getState.invoke(audioRecord);
-            
-            if (state != 1) { // STATE_INITIALIZED = 1
-                throw new Exception("AudioRecord initialization failed. State: " + state);
+    private static void prepareMainLooper() {
+        // Like Looper.prepareMainLooper(), but with quitAllowed set to true
+        Looper.prepare();
+        synchronized (Looper.class) {
+            try {
+                Field field = Looper.class.getDeclaredField("sMainLooper");
+                field.setAccessible(true);
+                field.set(null, Looper.myLooper());
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
             }
-            
-            // Start recording
-            Method startRecording = audioRecordClass.getMethod("startRecording");
-            startRecording.invoke(audioRecord);
-            
-            Log.i(TAG, "[AudioServer] AudioRecord started successfully with REMOTE_SUBMIX source");
-            
+        }
+    }
+
+    public static AudioFormat createAudioFormat() {
+        return new AudioFormat.Builder()
+                .setEncoding(ENCODING)
+                .setSampleRate(sampleRate)
+                .setChannelMask(channelConfig)
+                .build();
+    }
+
+    private static AudioRecord createAudioRecord() throws Exception {
+        int minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, ENCODING);
+        Log.i(TAG, "Min buffer size: " + minBufferSize + ", using: " + 8 * minBufferSize);
+        
+        AudioRecord.Builder builder = new AudioRecord.Builder()
+                .setAudioSource(REMOTE_SUBMIX)
+                .setAudioFormat(createAudioFormat());
+
+        if (minBufferSize > 0) {
+            builder.setBufferSizeInBytes(8 * minBufferSize);
+        }
+
+        return builder.build();
+    }
+
+    private static void initAudioRecord() throws Exception {
+        if (recorder != null) return; // Already initialized
+
+        try {
+            recorder = createAudioRecord();
+            if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new Exception("AudioRecord target state uninitialized. State: " + recorder.getState());
+            }
+            recorder.startRecording();
+            Log.i(TAG, "AudioRecord started successfully.");
         } catch (Exception e) {
-            Log.e(TAG, "[AudioServer] AudioRecord init error: " + e.getMessage());
+            releaseAudioRecord();
             throw e;
         }
     }
 
-    private static void startServer(int port) throws Exception {
-        ServerSocket serverSocket = new ServerSocket(port);
-        Log.i(TAG, "[AudioServer] Server listening on port " + port);
-
-        while (isRunning) {
-            Socket clientSocket = serverSocket.accept();
-            Log.i(TAG, "[AudioServer] Client connected: " + clientSocket.getInetAddress());
-            
-            new Thread(() -> handleClient(clientSocket)).start();
+    private static void releaseAudioRecord() {
+        if (recorder != null) {
+            try {
+                if (recorder.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                    recorder.stop();
+                }
+                recorder.release();
+            } catch (Exception e) {
+                Log.e(TAG, "Error releasing AudioRecord: " + e.getMessage());
+            } finally {
+                recorder = null;
+            }
         }
+    }
 
-        serverSocket.close();
+    private static void startServer(int port) throws Exception {
+        try (ServerSocket serverSocket = new ServerSocket()) {
+            serverSocket.setReuseAddress(true);
+            serverSocket.bind(new java.net.InetSocketAddress(port));
+
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                Log.i(TAG, "Client paired: " + clientSocket.getInetAddress());
+                handleClient(clientSocket);
+            }
+        }
     }
 
     private static void handleClient(Socket clientSocket) {
-        try {
-            OutputStream out = clientSocket.getOutputStream();
-            byte[] buffer = new byte[4096];
-
-            // Send configuration header
+        try (Socket socket = clientSocket; 
+             OutputStream out = socket.getOutputStream()) {
+            
+            initAudioRecord();
             sendHeader(out);
-            Log.i(TAG, "[AudioServer] Header sent to client");
 
-            // Get the read method
-            Class<?> audioRecordClass = Class.forName("android.media.AudioRecord");
-            Method read = audioRecordClass.getMethod("read", byte[].class, int.class, int.class);
-
-            Log.i(TAG, "[AudioServer] Starting audio stream...");
+            byte[] buffer = new byte[4096];
             long bytesStreamed = 0;
 
-            while (isRunning && clientSocket.isConnected()) {
-                try {
-                    int bytesRead = (int) read.invoke(audioRecord, buffer, 0, buffer.length);
-                    
-                    if (bytesRead > 0) {
-                        out.write(buffer, 0, bytesRead);
-                        out.flush();
-                        bytesStreamed += bytesRead;
-                        
-                        // Log progress every ~1 second (48KB at 48kHz * 16-bit)
-                        if (bytesStreamed % 102400 < 4096) {
-                            Log.i(TAG, "[AudioServer] Streamed: " + (bytesStreamed / 1024) + " KB");
-                        }
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "[AudioServer] Error during read: " + e.getMessage());
+            while (true) {
+                int bytesRead = recorder.read(buffer, 0, buffer.length);
+                
+                if (bytesRead > 0) {
+                    out.write(buffer, 0, bytesRead);
+                    out.flush();
+                    bytesStreamed += bytesRead;
+                } else if (bytesRead < 0) {
+                    Log.e(TAG, "Audio hardware read error code: " + bytesRead);
                     break;
                 }
             }
+            Log.i(TAG, "Stream closed safely. Data processed: " + (bytesStreamed / 1024) + " KB");
             
-            Log.i(TAG, "[AudioServer] Client stream ended. Total: " + (bytesStreamed / 1024) + " KB");
-            
+        } catch (IOException e) {
+            Log.i(TAG, "Client disconnected or network dropped: " + e.getMessage());
         } catch (Exception e) {
-            Log.e(TAG, "[AudioServer] Client error: " + e.getMessage());
-            e.printStackTrace();
+            Log.e(TAG, "Internal handling error: " + e.getMessage());
         } finally {
-            try {
-                clientSocket.close();
-                Log.i(TAG, "[AudioServer] Client disconnected");
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            releaseAudioRecord();
+            Log.i(TAG, "Client cleaned up and audio recording stopped.");
         }
     }
 
     private static void sendHeader(OutputStream out) throws Exception {
         byte[] header = new byte[6];
-        
-        // Sample rate (48000) as big-endian int
-        header[0] = (byte) ((SAMPLE_RATE >> 24) & 0xFF);
-        header[1] = (byte) ((SAMPLE_RATE >> 16) & 0xFF);
-        header[2] = (byte) ((SAMPLE_RATE >> 8) & 0xFF);
-        header[3] = (byte) (SAMPLE_RATE & 0xFF);
-        
-        // Channels (1 for mono)
-        header[4] = 1;
-        
-        // Format (2 for PCM 16-bit)
-        header[5] = 2;
+        header[0] = (byte) ((sampleRate >> 24) & 0xFF);
+        header[1] = (byte) ((sampleRate >> 16) & 0xFF);
+        header[2] = (byte) ((sampleRate >> 8) & 0xFF);
+        header[3] = (byte) (sampleRate & 0xFF);
+        header[4] = (byte) (channelConfig == AudioFormat.CHANNEL_IN_STEREO ? 2 : 1);
+        header[5] = (byte) (ENCODING == AudioFormat.ENCODING_PCM_16BIT ? 2 : 1);
         
         out.write(header);
         out.flush();
