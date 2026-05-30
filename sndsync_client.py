@@ -193,12 +193,20 @@ class SndsyncClient:
             self.logger.error("Failed to push JAR to device.")
             self.logger.error(result.stderr.strip())
             sys.exit(1)
-        
+
+        self._clear_logcat()
+
         if self.enable_audio:
             self._forward_port(self.audio_port)
         
         if self.enable_metadata:
             self._forward_port(self.meta_port)
+
+        logcat_tags = ["sndsync"]
+        if self.enable_audio:
+            logcat_tags.append("SndsyncAudioServer")
+        if self.enable_metadata:
+            logcat_tags.append("SndsyncMetaServer")
 
         # Build server arguments using the --audio- / --meta- prefix.
         # Main.java strips the prefix before forwarding to each server's own main().
@@ -236,7 +244,7 @@ class SndsyncClient:
             if stderr:
                 self.logger.error(f"Server STDERR:\n{stderr.strip()}")
             
-            for tag in ["SndsyncAudioServer", "SndsyncMetaServer", "sndsync"]:
+            for tag in logcat_tags:
                 result = subprocess.run(
                     self.adb_cmd + ["logcat", "-d", "-s", f"{tag}:E", "-v", "brief"],
                     capture_output=True, text=True,
@@ -251,7 +259,7 @@ class SndsyncClient:
         self._drain_pipe(self.server_process.stderr, "server-stderr")
 
         # Tail logcat for all server components under one process
-        self._logcat_process = self._start_logcat_tail(["SndsyncAudioServer", "SndsyncMetaServer", "sndsync"])
+        self._logcat_process = self._start_logcat_tail(logcat_tags)
         self.logger.debug("Server is running.")
 
     def _forward_port(self, port: int):
@@ -306,6 +314,19 @@ class SndsyncClient:
             except Exception:
                 pass
         threading.Thread(target=_drain, name=f"drain-{stream}", daemon=True).start()
+
+    def _clear_logcat(self):
+        """Clear the device log buffer before starting a new run."""
+        self.logger.info("Clearing logcat buffer...")
+        result = subprocess.run(
+            self.adb_cmd + ["logcat", "-c"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            self.logger.warning("Failed to clear logcat buffer.")
+            if result.stderr:
+                self.logger.warning(result.stderr.strip())
 
     # Metadata streaming
 
