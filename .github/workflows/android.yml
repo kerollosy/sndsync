@@ -28,21 +28,14 @@ jobs:
       - name: Make scripts executable
         run: chmod +x ./server/build.sh
 
-      - name: Compile and Package Android Servers
+      - name: Compile and Package the server
         run: |
           cd server
           ./build.sh
 
-      - name: Upload Audio Server Artifact
+      - name: Upload Server Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: audio-server-jar
-          path: server/dist/server.jar
-          retention-days: 30
-
-      - name: Upload Meta Server Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: meta-server-jar
-          path: server/dist/MetaServer.jar
+          name: sndsync-server
+          path: server/dist/sndsync-server.jar
           retention-days: 30

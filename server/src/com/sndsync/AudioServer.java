@@ -4,11 +4,9 @@ import android.util.Log;
 import android.os.Build;
 import android.media.AudioRecord;
 import android.media.AudioFormat;
-import android.os.Looper;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.reflect.Field;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -38,7 +36,15 @@ public class AudioServer {
             }
         }
 
-        for (String arg : args) {
+        for (int i = 0; i < args.length; i++) {
+            String arg = args[i];
+            if (arg.equalsIgnoreCase("--port") && i + 1 < args.length) {
+                try {
+                    port = Integer.parseInt(args[i + 1]);
+                } catch (NumberFormatException e) {
+                    Log.e(TAG, "Invalid port number: " + args[i + 1]);
+                }
+            }
             if (arg.equalsIgnoreCase("--stereo")) {
                 channelConfig = AudioFormat.CHANNEL_IN_STEREO;
             } else if (arg.equalsIgnoreCase("--16000")) {
@@ -53,26 +59,11 @@ public class AudioServer {
             (channelConfig == AudioFormat.CHANNEL_IN_STEREO ? "Stereo" : "Mono"));
 
         try {
-            prepareMainLooper();
             startServer(port);
         } catch (Exception e) {
             Log.e(TAG, "FATAL SERVER ERROR: " + e.getMessage());
             releaseAudioRecord();
             System.exit(1);
-        }
-    }
-
-    private static void prepareMainLooper() {
-        // Like Looper.prepareMainLooper(), but with quitAllowed set to true
-        Looper.prepare();
-        synchronized (Looper.class) {
-            try {
-                Field field = Looper.class.getDeclaredField("sMainLooper");
-                field.setAccessible(true);
-                field.set(null, Looper.myLooper());
-            } catch (ReflectiveOperationException e) {
-                throw new AssertionError(e);
-            }
         }
     }
 

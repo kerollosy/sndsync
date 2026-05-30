@@ -8,7 +8,6 @@ import android.media.session.MediaController;
 import android.media.session.MediaController.PlaybackInfo;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
-import android.os.Looper;
 import android.util.Base64;
 
 import org.json.JSONObject;
@@ -17,7 +16,6 @@ import java.io.IOException;
 import java.io.ByteArrayOutputStream;
 import java.io.BufferedWriter;
 import java.io.OutputStreamWriter;
-import java.lang.reflect.Field;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.List;
@@ -35,38 +33,22 @@ public class MetaServer {
 
     public static void main(String[] args) {
         int port = DEFAULT_PORT;
-        if (args.length > 0) {
+        if (args.length > 1 && args[0].equalsIgnoreCase("--port")) {
             try {
-                port = Integer.parseInt(args[0]);
+                port = Integer.parseInt(args[1]);
             } catch (NumberFormatException e) {
-                Log.e(TAG, "Invalid port number: " + args[0] + ", using default: " + port);
+                Log.e(TAG, "Invalid port number: " + args[1] + ", using default: " + port);
             }
         }
 
         Log.i(TAG, "Starting MetaServer on port: " + port);
 
         try {
-            prepareMainLooper();
-            Workarounds.apply();
             initMediaSessionManager();
             startServer(port);
         } catch (Exception e) {
             Log.e(TAG, "FATAL SERVER ERROR: " + e.getMessage());
             System.exit(1);
-        }
-    }
-
-    private static void prepareMainLooper() {
-        // Like Looper.prepareMainLooper(), but with quitAllowed set to true
-        Looper.prepare();
-        synchronized (Looper.class) {
-            try {
-                Field field = Looper.class.getDeclaredField("sMainLooper");
-                field.setAccessible(true);
-                field.set(null, Looper.myLooper());
-            } catch (ReflectiveOperationException e) {
-                throw new AssertionError(e);
-            }
         }
     }
 
