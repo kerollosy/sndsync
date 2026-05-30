@@ -1,6 +1,6 @@
 """
 sndsync - Android Audio Streaming Client
-Stream audio from Android devices to desktop in real-time.
+Stream audio and metadata from Android devices to desktop in real-time.
 """
 
 import json
@@ -22,6 +22,7 @@ from smtc_bridge import SmtcBridge
 
 init(autoreset=True)
 
+# Maps logical media key names to Android key event codes.
 KEYEVENT = {
     "play": "126",
     "pause": "127",
@@ -32,7 +33,7 @@ KEYEVENT = {
 
 
 class ColoredFormatter(logging.Formatter):
-    """Custom formatter for colored log output."""
+    """Custom logging formatter that colorizes level names for terminal output."""
     
     COLORS = {
         'DEBUG': Fore.BLUE,
@@ -50,34 +51,37 @@ class ColoredFormatter(logging.Formatter):
 class SndsyncClient:
     """Android audio streaming client using ADB and socket communication."""
     
-    def __init__(self, port: int = 9999, device_serial: Optional[str] = None, 
-                jar_audio_path: Optional[str] = None, jar_meta_path: Optional[str] = None,
-                debug: bool = False):
+    def __init__(
+        self, 
+        jar_path: str, 
+        audio_port: int = 9999, 
+        meta_port: int = 9998,
+        device_serial: Optional[str] = None, 
+        enable_audio: bool = True,
+        enable_metadata: bool = True,
+        debug: bool = False
+    ):
         """
         Initialize the sndsync client.
         
         Args:
-            port: Local port for audio forwarding
-            device_serial: Optional device serial for multiple devices
-            jar_audio_path: Path to AudioServer.jar file (for audio data), optional
-            jar_meta_path: Path to MetaServer.jar file (for metadata), optional
+            jar_path: Path to sndsync-server.jar.
+            audio_port: Local TCP port for audio stream forwarding.
+            meta_port: Local TCP port for metadata stream forwarding.
+            device_serial: ADB device serial for targeting a specific device.
             debug: Enable debug logging
         """
         self.running = True
-        self.audio_port = port
-        self.meta_port = 9998
+        self.audio_port = audio_port
+        self.meta_port = meta_port
         self.device_serial = device_serial
-        self.jar_audio_path = Path(jar_audio_path) if jar_audio_path else None
-        self.jar_meta_path = Path(jar_meta_path) if jar_meta_path else None
-        
-        # Validate that at least one server is specified
-        if not self.jar_audio_path and not self.jar_meta_path:
-            raise ValueError("Must specify at least one: --audio-jar or --metadata-jar")
+        self.enable_audio = enable_audio
+        self.enable_metadata = enable_metadata
+        self.jar_path = Path(jar_path)
 
         # Setup logging
         self.logger = logging.getLogger("sndsync")
         self.logger.setLevel(logging.DEBUG if debug else logging.INFO)
-        
         handler = logging.StreamHandler()
         handler.setFormatter(ColoredFormatter(
             fmt='%(asctime)s [%(levelname)s] %(message)s',
@@ -91,8 +95,7 @@ class SndsyncClient:
         self.metadata_socket = None
         self.pyaudio_instance = None
         self.audio_stream = None
-        self.audio_server_process = None
-        self.meta_server_process = None
+        self.server_process = None
         self.metadata_running = threading.Event()
         self.metadata_thread = None
         self.smtc = SmtcBridge(self.logger, self._send_media_key)
@@ -102,7 +105,7 @@ class SndsyncClient:
         self.channels = None
         self.audio_format = None
 
-        # Build ADB command prefix
+        # Build ADB command prefix - all subprocess calls prepend this.
         self.adb_cmd = ["adb"]
         if device_serial:
             self.adb_cmd.extend(["-s", device_serial])
@@ -111,12 +114,9 @@ class SndsyncClient:
         """Execute the complete streaming workflow."""
         self._check_adb()
         self._check_device()
+        self._setup_server()
         
-        has_audio = self.jar_audio_path is not None
-        has_metadata = self.jar_meta_path is not None
-        
-        if has_metadata:
-            self._setup_meta_server()
+        if self.enable_metadata:
             self.smtc.initialize()
             self.metadata_running.set()
             self.metadata_thread = threading.Thread(
@@ -125,11 +125,10 @@ class SndsyncClient:
             )
             self.metadata_thread.start()
         
-        if has_audio:
-            self._setup_audio_server()
+        if self.enable_audio:
             self._connect()
             self._stream()
-        elif has_metadata:
+        else:
             # Only metadata server running - keep process alive
             self.logger.info("Metadata server active. Press Ctrl+C to stop.")
             try:
@@ -145,13 +144,13 @@ class SndsyncClient:
             result = subprocess.run(["adb", "version"], capture_output=True, text=True)
             if result.returncode != 0:
                 raise FileNotFoundError
-            self.logger.debug(f"ADB version: {result.stdout.strip()}")
+            self.logger.debug(f"ADB version: {result.stdout.splitlines()[0]}")
         except FileNotFoundError:
             self.logger.error("ADB not found. Please install ADB and ensure it's in your PATH.")
             sys.exit(1)
     
     def _check_device(self):
-        """Verify device is connected."""
+        """Verify that the target device is connected and available."""
         self.logger.info("Checking device connection...")
         result = subprocess.run(self.adb_cmd + ["get-state"], capture_output=True, text=True)
         
@@ -163,6 +162,126 @@ class SndsyncClient:
         
         if self.device_serial:
             self.logger.info(f"Using device: {self.device_serial}")
+
+    def _setup_server(self):
+        """Push the JAR, forward ports, and launch the sndsync server process."""
+        if not self.jar_path.exists():
+            self.logger.error(f"sndsync-server.jar not found at: {self.jar_path}")
+            self.logger.error("Please compile the project first or specify correct path with --jar")
+            sys.exit(1)
+        
+        self.logger.info(f"Pushing {self.jar_path.name} to device...")
+        result = subprocess.run(
+            self.adb_cmd + ["push", str(self.jar_path), "/data/local/tmp/sndsync-server.jar"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            self.logger.error("Failed to push JAR to device")
+            self.logger.error(result.stderr.strip())
+            sys.exit(1)
+        
+        self._forward_port(self.audio_port)
+        self._forward_port(self.meta_port)
+
+        # Build server arguments using the --audio- / --meta- prefix.
+        # Main.java strips the prefix before forwarding to each server's own main().
+        server_args = []
+        server_args += ["--audio-port", str(self.audio_port)]
+        server_args += ["--audio-stereo"]
+        server_args += ["--meta-port", str(self.meta_port)]
+        
+        self.logger.info("Starting sndsync server on device...")
+        self.server_process = subprocess.Popen(
+            self.adb_cmd + [
+                "shell", 
+                "CLASSPATH=/data/local/tmp/sndsync-server.jar"
+                " app_process /data/local/tmp/ com.sndsync.Main "
+                + " ".join(server_args),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        # Wait a moment for server to start
+        self.logger.debug("Waiting for server to start...")
+        time.sleep(2)
+        
+        # Check if server started successfully
+        if self.server_process.poll() is not None:
+            stdout, stderr = self.server_process.communicate()
+            self.logger.error("sndsync server failed to start.")
+            if stdout:
+                self.logger.debug(f"Server STDOUT:\n{stdout.strip()}")
+            if stderr:
+                self.logger.error(f"Server STDERR:\n{stderr.strip()}")
+            
+            for tag in ["SndsyncAudioServer", "SndsyncMetaServer", "sndsync"]:
+                result = subprocess.run(
+                    self.adb_cmd + ["logcat", "-d", "-s", f"{tag}:E", "-v", "brief"],
+                    capture_output=True, text=True,
+                )
+                if result.stdout.strip():
+                    self.logger.error(f"logcat [{tag}]:\n{result.stdout.strip()}")
+
+            sys.exit(1)
+        
+        self._drain_pipe(self.server_process.stdout, "server-stdout")
+        self._drain_pipe(self.server_process.stderr, "server-stderr")
+
+        # Tail logcat for all server components under one process
+        self._logcat_process = self._start_logcat_tail(["SndsyncAudioServer", "SndsyncMetaServer", "sndsync"])
+        self.logger.debug("Server is running.")
+
+    def _forward_port(self, port: int):
+        self.logger.info(f"Forwarding port {port}...")
+        result = subprocess.run(
+            self.adb_cmd + ["forward", f"tcp:{port}", f"tcp:{port}"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            self.logger.error(f"Failed to setup port forwarding for port {port}")
+            self.logger.error(result.stderr.strip())
+            sys.exit(1)
+
+    def _start_logcat_tail(self, tags: list[str]) -> subprocess.Popen:
+        """
+        Start a logcat process that streams all log levels for the given tags
+        and forwards each line to the Python logger at DEBUG level.
+        """
+        tag_filter = " ".join(f"{t}:*" for t in tags)
+        process = subprocess.Popen(
+            self.adb_cmd + ["logcat", "-s", tag_filter, "-v", "time"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        threading.Thread(
+            target=self._tail_logcat_pipe,
+            args=(process,),
+            daemon=True,
+        ).start()
+        return process
+
+    def _tail_logcat_pipe(self, process: subprocess.Popen):
+        """Read lines from a logcat process and forward them to the Python logger."""
+        try:
+            for line in process.stdout:
+                line = line.rstrip()
+                if line:
+                    self.logger.debug(f"[device] {line}")
+        except Exception as e:
+            self.logger.debug(f"Logcat tail ended: {e}")
+
+    def _drain_pipe(self, pipe, stream: str):
+        """Drain a subprocess pipe in a background thread to prevent buffer deadlock."""
+        def _drain():
+            try:
+                for _ in pipe:
+                    pass
+            except Exception:
+                pass
+        threading.Thread(target=_drain, name=f"drain-{stream}", daemon=True).start()
 
     def _send_media_key(self, key: str) -> None:
         code = KEYEVENT.get(key)
@@ -180,142 +299,6 @@ class SndsyncClient:
             )
         except Exception as e:
             self.logger.debug(f"Keyevent send failed: {e}")
-
-    def _setup_meta_server(self):
-        """Deploy and start the MetaServer on device."""
-        if not self.jar_meta_path.exists():
-            self.logger.error(f"MetaServer.jar not found at: {self.jar_meta_path}")
-            self.logger.error("Please compile the project first or specify correct path with --metadata-jar")
-            sys.exit(1)
-        
-        self.logger.info(f"Pushing {self.jar_meta_path} to device...")
-        result = subprocess.run(
-            self.adb_cmd + ["push", str(self.jar_meta_path), "/data/local/tmp/MetaServer.jar"],
-            capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            self.logger.error("Failed to push JAR to device")
-            self.logger.error(result.stderr)
-            sys.exit(1)
-        
-        self.logger.info(f"Setting up port forwarding for port {self.meta_port}...")
-        result = subprocess.run(
-            self.adb_cmd + ["forward", f"tcp:{self.meta_port}", f"tcp:{self.meta_port}"],
-            capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            self.logger.error("Failed to setup port forwarding")
-            self.logger.error(result.stderr)
-            sys.exit(1)
-        
-        self.logger.info("Starting MetaServer on device...")
-        # Start the server in background
-        self.meta_server_process = subprocess.Popen(
-            self.adb_cmd + ["shell", f"CLASSPATH=/data/local/tmp/MetaServer.jar app_process /data/local/tmp/ com.metaserver.MetaServer {self.meta_port}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        # Wait a moment for server to start
-        self.logger.debug("Waiting for server to start...")
-        time.sleep(2)
-        
-        # Check if server started successfully
-        if self.meta_server_process.poll() is not None:
-            stdout, stderr = self.meta_server_process.communicate()
-            self.logger.error("MetaServer failed to start")
-            if stdout:
-                self.logger.debug(f"Server STDOUT:\n{stdout}")
-            if stderr:
-                self.logger.error(f"Server STDERR:\n{stderr}")
-            
-            logcat_result = subprocess.run(
-                self.adb_cmd + [
-                    "logcat", "-d",          # -d = dump and exit
-                    "-s", "MetaServer:E",   # only MetaServer errors
-                    "-v", "brief"
-                ],
-                capture_output=True, text=True
-            )
-            if logcat_result.stdout.strip():
-                self.logger.error(f"MetaServer logcat errors:\n{logcat_result.stdout.strip()}")
-            
-            sys.exit(1)
-        
-        self.logger.debug("MetaServer appears to be running")
-
-    def _setup_audio_server(self):
-        """Deploy and start the AudioServer on device."""
-        if not self.jar_audio_path.exists():
-            self.logger.error(f"AudioServer.jar not found at: {self.jar_audio_path}")
-            self.logger.error("Please compile the project first or specify correct path with --audio-jar")
-            sys.exit(1)
-        
-        self.logger.info(f"Pushing {self.jar_audio_path} to device...")
-        result = subprocess.run(
-            self.adb_cmd + ["push", str(self.jar_audio_path), "/data/local/tmp/AudioServer.jar"],
-            capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            self.logger.error("Failed to push JAR to device")
-            self.logger.error(result.stderr)
-            sys.exit(1)
-        
-        self.logger.info(f"Setting up port forwarding for port {self.audio_port}...")
-        result = subprocess.run(
-            self.adb_cmd + ["forward", f"tcp:{self.audio_port}", f"tcp:{self.audio_port}"],
-            capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            self.logger.error("Failed to setup port forwarding")
-            self.logger.error(result.stderr)
-            sys.exit(1)
-        
-        self.logger.info("Starting AudioServer on device...")
-        # Start the server in background
-        self.audio_server_process = subprocess.Popen(
-            self.adb_cmd + [
-                "shell",
-                "CLASSPATH=/data/local/tmp/AudioServer.jar app_process /data/local/tmp/ com.audioserver.AudioServer "
-                f"{self.audio_port}"
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        
-        # Wait a moment for server to start
-        self.logger.debug("Waiting for server to start...")
-        time.sleep(2)
-        
-        # Check if server started successfully
-        if self.audio_server_process.poll() is not None:
-            stdout, stderr = self.audio_server_process.communicate()
-            self.logger.error("AudioServer failed to start")
-            if stdout:
-                self.logger.debug(f"Server STDOUT:\n{stdout}")
-            if stderr:
-                self.logger.error(f"Server STDERR:\n{stderr}")
-
-            logcat_result = subprocess.run(
-                self.adb_cmd + [
-                    "logcat", "-d",          # -d = dump and exit
-                    "-s", "AudioServer:E",   # only AudioServer errors
-                    "-v", "brief"
-                ],
-                capture_output=True, text=True
-            )
-            if logcat_result.stdout.strip():
-                self.logger.error(f"AudioServer logcat errors:\n{logcat_result.stdout.strip()}")
-
-            sys.exit(1)
-        
-        self.logger.debug("AudioServer appears to be running")
 
     def metadata_listener(self):
         self.logger.info("Connecting to metadata stream...")
@@ -469,33 +452,17 @@ class SndsyncClient:
         self.running = False
         self.metadata_running.clear()
         
-        if self.meta_server_process:
+        if self.server_process:
             try:
                 self.logger.debug("Terminating MetaServer process...")
-                self.meta_server_process.terminate()
-                self.meta_server_process.wait(timeout=5)
+                self.server_process.terminate()
+                self.server_process.wait(timeout=5)
                 self.logger.debug("MetaServer process terminated")
             except subprocess.TimeoutExpired:
                 self.logger.debug("MetaServer process didn't terminate, killing...")
                 try:
-                    self.meta_server_process.kill()
+                    self.server_process.kill()
                     self.logger.debug("MetaServer process killed")
-                except:
-                    pass
-            except:
-                pass
-
-        if self.audio_server_process:
-            try:
-                self.logger.debug("Terminating AudioServer process...")
-                self.audio_server_process.terminate()
-                self.audio_server_process.wait(timeout=5)
-                self.logger.debug("AudioServer process terminated")
-            except subprocess.TimeoutExpired:
-                self.logger.debug("AudioServer process didn't terminate, killing...")
-                try:
-                    self.audio_server_process.kill()
-                    self.logger.debug("AudioServer process killed")
                 except:
                     pass
             except:
@@ -530,23 +497,21 @@ class SndsyncClient:
             except:
                 pass
         
-        # Clean up port forwarding
-        if self.jar_audio_path:
+        if self.jar_path:
             try:
-                self.logger.debug(f"Removing port forwarding for audio port {self.audio_port}...")
+                self.logger.debug(f"Removing port forwarding for metadata port {self.meta_port}...")
                 subprocess.run(
-                    self.adb_cmd + ["forward", "--remove", f"tcp:{self.audio_port}"],
+                    self.adb_cmd + ["forward", "--remove", f"tcp:{self.meta_port}"],
                     capture_output=True,
                     timeout=5
                 )
             except:
                 pass
-        
-        if self.jar_meta_path:
+
             try:
-                self.logger.debug(f"Removing port forwarding for metadata port {self.meta_port}...")
+                self.logger.debug(f"Removing port forwarding for audio port {self.audio_port}...")
                 subprocess.run(
-                    self.adb_cmd + ["forward", "--remove", f"tcp:{self.meta_port}"],
+                    self.adb_cmd + ["forward", "--remove", f"tcp:{self.audio_port}"],
                     capture_output=True,
                     timeout=5
                 )
@@ -566,18 +531,20 @@ def main():
         help="Device serial number (for multiple devices)"
     )
     parser.add_argument(
-        "-p", "--port",
+        "-ap", "--audio-port",
         type=int,
         default=9999,
         help="Local port for audio forwarding (default: 9999)"
     )
     parser.add_argument(
-        "-a", "--audio-jar",
-        help="Path to AudioServer.jar file (optional, stream audio)"
+        "-mp", "--metadata-port",
+        type=int,
+        default=9998,
+        help="Local port for metadata forwarding (default: 9998)"
     )
     parser.add_argument(
-        "-m", "--metadata-jar",
-        help="Path to MetaServer.jar file (optional, stream metadata)"
+        "-j", "--jar",
+        help="Path to sndsync-server.jar file"
     )
     parser.add_argument(
         "-d", "--debug",
@@ -589,10 +556,10 @@ def main():
     
     try:
         client = SndsyncClient(
-            port=args.port,
+            jar_path=args.jar,
+            audio_port=args.audio_port,
+            meta_port=args.metadata_port,
             device_serial=args.serial,
-            jar_audio_path=args.audio_jar,
-            jar_meta_path=args.metadata_jar,
             debug=args.debug
         )
     except ValueError as e:
