@@ -15,6 +15,7 @@ import logging
 import struct
 from pathlib import Path
 from typing import Optional
+from collections import deque
 
 import pyaudio
 from colorama import init, Fore, Style
@@ -34,14 +35,14 @@ KEYEVENT = {
 
 class ColoredFormatter(logging.Formatter):
     """Custom logging formatter that colorizes level names for terminal output."""
-    
+
     COLORS = {
         'DEBUG': Fore.BLUE,
         'INFO': Fore.GREEN,
         'WARNING': Fore.YELLOW,
         'ERROR': Fore.RED,
     }
-    
+
     def format(self, record):
         color = self.COLORS.get(record.levelname, '')
         record.levelname = f"{color}{record.levelname}{Style.RESET_ALL}"
@@ -50,7 +51,7 @@ class ColoredFormatter(logging.Formatter):
 
 class SndsyncClient:
     """Android audio streaming client using ADB and socket communication."""
-    
+
     def __init__(
         self,
         jar_path: str,
@@ -60,6 +61,7 @@ class SndsyncClient:
         enable_audio: bool = True,
         enable_metadata: bool = True,
         stereo: bool = False,
+        max_latency_ms: int = 200,
         debug: bool = False
     ):
         """
@@ -73,6 +75,8 @@ class SndsyncClient:
             enable_audio: Start the AudioServer and stream audio locally.
             enable_metadata: Start the MetaServer and update SMTC.
             stereo: Record in stereo instead of mono.
+            max_latency_ms: Maximum jitter buffer depth in milliseconds before
+                old chunks are dropped to resync to live audio (default: 200).
             debug: Enable debug logging
 
         Raises:
@@ -88,6 +92,7 @@ class SndsyncClient:
         self.enable_audio = enable_audio
         self.enable_metadata = enable_metadata
         self.stereo = stereo
+        self.max_latency_ms = max_latency_ms
         self.running = True
 
         # Logging
@@ -110,6 +115,13 @@ class SndsyncClient:
         # PyAudio resources
         self.pyaudio_instance: Optional[pyaudio.PyAudio] = None
         self.audio_stream: Optional[pyaudio.Stream] = None
+
+        # Jitter buffer — a deque of raw PCM byte chunks fed by the network
+        # thread and consumed by the playback thread. When the buffer depth
+        # exceeds max_latency_ms worth of audio, old chunks are dropped so
+        # playback snaps back to live rather than drifting further behind.
+        self._jitter_buffer: deque[bytes] = deque()
+        self._jitter_lock = threading.Lock()
 
         # Metadata thread control
         self.metadata_running: threading.Event = threading.Event()
@@ -243,7 +255,7 @@ class SndsyncClient:
                 self.logger.debug(f"Server STDOUT:\n{stdout.strip()}")
             if stderr:
                 self.logger.error(f"Server STDERR:\n{stderr.strip()}")
-            
+
             for tag in logcat_tags:
                 result = subprocess.run(
                     self.adb_cmd + ["logcat", "-d", "-s", f"{tag}:E", "-v", "brief"],
@@ -273,7 +285,7 @@ class SndsyncClient:
             self.logger.error(f"Failed to set up port forwarding for port {port}.")
             self.logger.error(result.stderr.strip())
             sys.exit(1)
-    
+
     # Logcat tailing
 
     def _start_logcat_tail(self, tags: list[str]) -> subprocess.Popen:
@@ -465,25 +477,90 @@ class SndsyncClient:
             self.logger.error(f"Failed to open audio output: {e}")
             sys.exit(1)
 
-        self.logger.info("Streaming audio... Press Ctrl+C to stop.")
+        # Pre-compute the maximum number of chunks allowed in the buffer.
+        # Each recv() call yields at most 4096 bytes; we use that as the chunk
+        # size for the capacity calculation.
+        bytes_per_second  = self.sample_rate * self.channels * 2  # 16-bit = 2 bytes/sample
+        chunk_size        = 4096
+        max_buffer_chunks = max(1, (self.max_latency_ms * bytes_per_second) // (1000 * chunk_size))
 
-        bytes_received = 0
-        last_logged_bytes = 0
-        log_interval      = 100 * 1024  # log a progress line every 100 KB
+        self.logger.info(
+            f"Streaming audio. Jitter buffer cap: {self.max_latency_ms} ms "
+            f"(~{max_buffer_chunks} chunks). Press Ctrl+C to stop."
+        )
+
+        self.logger.info(
+            f"Streaming audio. Jitter buffer cap: {self.max_latency_ms} ms "
+            f"(~{max_buffer_chunks} chunks). Press Ctrl+C to stop."
+        )
+
+        recv_done = threading.Event()
+
+        def _recv_loop():
+            """Read from the socket and push chunks into the jitter buffer."""
+            bytes_received    = 0
+            last_logged_bytes = 0
+            log_interval      = 100 * 1024
+
+            try:
+                while self.running:
+                    data = self.audio_socket.recv(chunk_size)
+                    if not data:
+                        self.logger.info("Connection closed by device.")
+                        break
+
+                    with self._jitter_lock:
+                        self._jitter_buffer.append(data)
+
+                    bytes_received += len(data)
+                    if bytes_received - last_logged_bytes >= log_interval:
+                        last_logged_bytes = bytes_received
+                        self.logger.debug(
+                            f"Received: {bytes_received / (1024 * 1024):.2f} MB"
+                        )
+
+            except socket.timeout:
+                self.logger.error("Socket timed out while waiting for audio data.")
+            except socket.error as e:
+                self.logger.error(f"Socket error during receive: {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error in receive loop: {e}")
+            finally:
+                recv_done.set()
+
+        recv_thread = threading.Thread(target=_recv_loop, name="audio-recv", daemon=True)
+        recv_thread.start()
+
+        drops_since_last_log = 0
+
         try:
-            while self.running:
-                data = self.audio_socket.recv(4096)
-                if not data:
-                    self.logger.info("Connection closed by device.")
-                    break
+            while self.running and not recv_done.is_set():
+                with self._jitter_lock:
+                    buffer_depth = len(self._jitter_buffer)
 
-                self.audio_stream.write(data)
-                bytes_received += len(data)
+                    # Drop oldest chunks if we've exceeded the latency cap.
+                    if buffer_depth > max_buffer_chunks:
+                        drop_count = buffer_depth - max_buffer_chunks
+                        for _ in range(drop_count):
+                            self._jitter_buffer.popleft()
+                        drops_since_last_log += drop_count
 
-                if bytes_received - last_logged_bytes >= log_interval:
-                    last_logged_bytes = bytes_received
-                    self.logger.debug(f"Received: {bytes_received / (1024 * 1024):.2f} MB")
+                    chunk = self._jitter_buffer.popleft() if self._jitter_buffer else None
 
+                if drops_since_last_log > 0:
+                    dropped_ms = (drops_since_last_log * chunk_size * 1000) // bytes_per_second
+                    self.logger.debug(
+                        f"Jitter buffer overflow: dropped {drops_since_last_log} chunks "
+                        f"(~{dropped_ms} ms) to resync to live audio."
+                    )
+                    drops_since_last_log = 0
+
+                if chunk:
+                    self.audio_stream.write(chunk)
+                else:
+                    # Buffer is empty — network is momentarily slower than
+                    # playback. Sleep briefly to avoid a busy-wait spin.
+                    time.sleep(0.005)
         except KeyboardInterrupt:
             self.logger.info("Interrupted by user.")
         except socket.timeout:
@@ -494,7 +571,7 @@ class SndsyncClient:
             self.logger.error(f"Unexpected error during playback: {e}")
 
         self.logger.info(
-            f"Stream ended. Total received: {bytes_received / (1024 * 1024):.2f} MB"
+            f"Stream ended."
         )
 
     def cleanup(self):
@@ -620,11 +697,19 @@ def main():
         help="Record in stereo instead of mono"
     )
     parser.add_argument(
+        "--max-latency",
+        type=int,
+        default=200,
+        metavar="MS",
+        help="Jitter buffer cap in milliseconds. Chunks older than this are "
+            "dropped to resync playback to live audio (default: 200).",
+    )
+    parser.add_argument(
         "-d", "--debug",
         action="store_true",
         help="Enable debug logging"
     )
-    
+
     args = parser.parse_args()
 
     try:
@@ -636,21 +721,22 @@ def main():
             enable_audio=not args.no_audio,
             enable_metadata=not args.no_metadata,
             stereo=args.stereo,
+            max_latency_ms=args.max_latency,
             debug=args.debug
         )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         parser.print_help()
         sys.exit(1)
-    
+
     # Setup cleanup on exit
     def signal_handler(sig, frame):
         client.running = False
         client.metadata_running.clear()
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     try:
         client.run()
     finally:
