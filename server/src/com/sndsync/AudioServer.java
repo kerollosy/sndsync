@@ -2,6 +2,9 @@ package com.sndsync;
 
 import android.util.Log;
 import android.os.Build;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.os.SystemClock;
 import android.media.AudioRecord;
 import android.media.AudioFormat;
 
@@ -16,10 +19,12 @@ public class AudioServer {
     private static final int DEFAULT_PORT = 9999;
     private static final int REMOTE_SUBMIX = 8;
     private static final int ENCODING = AudioFormat.ENCODING_PCM_16BIT;
+    private static final int CHANNEL_MASK_STEREO = AudioFormat.CHANNEL_IN_LEFT | AudioFormat.CHANNEL_IN_RIGHT;
     private static int sampleRate = 48000;
     private static int channelConfig = AudioFormat.CHANNEL_IN_MONO;
     
     private static AudioRecord recorder;
+    private static ActivityManager activityManager;
 
     public static void main(String[] args) throws Exception {        
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -83,6 +88,10 @@ public class AudioServer {
                 .setAudioSource(REMOTE_SUBMIX)
                 .setAudioFormat(createAudioFormat());
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setContext(FakeContext.get());
+        }
+
         if (minBufferSize > 0) {
             builder.setBufferSizeInBytes(8 * minBufferSize);
         }
@@ -90,15 +99,85 @@ public class AudioServer {
         return builder.build();
     }
 
+    private static int getChannelCount() {
+        return channelConfig == AudioFormat.CHANNEL_IN_STEREO ? 2 : 1;
+    }
+
+    private static int getChannelMaskForWorkaround() {
+        return channelConfig == AudioFormat.CHANNEL_IN_STEREO ? CHANNEL_MASK_STEREO : AudioFormat.CHANNEL_IN_MONO;
+    }
+
+    private static void startWorkaroundAndroid11() {
+        if (activityManager == null) {
+            activityManager = ActivityManager.create();
+        }
+        activityManager.forceStopPackage(FakeContext.PACKAGE_NAME);
+    }
+
+    private static void stopWorkaroundAndroid11() {
+        if (activityManager == null) {
+            activityManager = ActivityManager.create();
+        }
+
+        Intent intent = new Intent(Intent.ACTION_MAIN);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.addCategory(Intent.CATEGORY_LAUNCHER);
+        intent.setComponent(new ComponentName(FakeContext.PACKAGE_NAME, "com.android.shell.HeapDumpActivity"));
+        activityManager.startActivity(intent);
+    }
+
+    private static void tryStartRecording(int attempts, int delayMs) throws Exception {
+        while (attempts-- > 0) {
+            SystemClock.sleep(delayMs);
+            try {
+                startRecording();
+                return;
+            } catch (UnsupportedOperationException e) {
+                if (attempts == 0) {
+                    Log.e(TAG, "Failed to start audio capture on Android 11 foreground workaround");
+                    throw e;
+                }
+                Log.w(TAG, "Audio capture start failed, retrying...");
+            }
+        }
+    }
+
+    private static void startRecording() throws Exception {
+        try {
+            recorder = createAudioRecord();
+        } catch (NullPointerException e) {
+            Log.w(TAG, "AudioRecord.Builder failed, trying workaround constructor", e);
+            recorder = Workarounds.createAudioRecord(
+                    REMOTE_SUBMIX,
+                    sampleRate,
+                    channelConfig,
+                    getChannelCount(),
+                    getChannelMaskForWorkaround(),
+                    ENCODING
+            );
+        }
+
+        if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+            throw new Exception("AudioRecord target state uninitialized. State: " + recorder.getState());
+        }
+        recorder.startRecording();
+    }
+
     private static void initAudioRecord() throws Exception {
         if (recorder != null) return; // Already initialized
 
         try {
-            recorder = createAudioRecord();
-            if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
-                throw new Exception("AudioRecord target state uninitialized. State: " + recorder.getState());
+            if (Build.VERSION.SDK_INT == Build.VERSION_CODES.R) {
+                startWorkaroundAndroid11();
+                try {
+                    tryStartRecording(5, 100);
+                } finally {
+                    stopWorkaroundAndroid11();
+                }
+            } else {
+                startRecording();
             }
-            recorder.startRecording();
+
             Log.i(TAG, "AudioRecord started successfully.");
         } catch (Exception e) {
             releaseAudioRecord();
